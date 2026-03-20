@@ -1,0 +1,125 @@
+# Full example manifest from spec section 3.1
+name: my-agent-project
+version: 0.1.0
+description: An agent environment for the Acme backend service
+
+backends:
+  claude-code:
+    default: true
+    isolation: strict
+    model:
+      id: sonnet
+      effort: high
+      plan_model: opus
+      available:
+        - sonnet
+        - opus
+        - haiku
+  gemini-cli:
+    isolation: permissive
+    model:
+      id: gemini-2.5-pro
+      parameters:
+        temperature: 0.7
+        thinking_budget: 4096
+
+registries:
+  official:
+    url: https://github.com/anthropics/claude-plugins-official
+  community:
+    url: https://github.com/kivilaid/plugin-marketplace
+  internal:
+    url: https://github.com/acme-corp/private-plugins
+    auth: token
+
+plugins:
+  quality-review:
+    registry: official
+    version: ">=1.0.0, <2.0.0"
+  supabase-toolkit:
+    registry: community
+    version: "~1.3.0"
+  internal-tools:
+    registry: internal
+    version: "2.1.0"
+  custom-plugin:
+    git: https://github.com/someone/their-plugin.git
+    tag: v3.0.0
+
+skills:
+  web-design-guidelines:
+    git: https://github.com/vercel-labs/agent-skills
+    path: skills/web-design-guidelines
+    tag: v2.1.0
+  react-best-practices:
+    git: https://github.com/vercel-labs/agent-skills
+    path: skills/react-best-practices
+    commit: abc123def456
+  deploy-checklist:
+    path: ./skills/deploy-checklist
+
+agents:
+  my-reviewer:
+    path: ./agents/my-reviewer.md
+    model: opus
+  security-scanner:
+    git: https://github.com/wshobson/agents
+    path: plugins/security-review/agents/security-auditor.md
+    branch: main
+    model: opus
+    parameters:
+      temperature: 0.1
+      thinking_budget: 8192
+  quick-linter:
+    path: ./agents/quick-linter.md
+    model: haiku
+    parameters:
+      temperature: 0.0
+
+mcp-servers:
+  playwright:
+    url: https://mcp.playwright.dev/sse
+  filesystem:
+    command: npx
+    args:
+      - "@anthropic-ai/mcp-server-filesystem"
+      - "./src"
+    env:
+      ALLOW_WRITE: "true"
+  postgres:
+    command: npx
+    args:
+      - "@anthropic-ai/mcp-server-postgres"
+    env:
+      DATABASE_URL: "${DATABASE_URL}"
+
+settings:
+  claude-code:
+    permissions:
+      allow:
+        - "Bash(npm test)"
+        - "Bash(npm run lint)"
+      deny:
+        - "Bash(rm -rf)"
+    environment:
+      CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"
+  gemini-cli:
+    safety_settings:
+      harassment: block_none
+
+paths:
+  agents: ./custom/agents
+  skills: ./custom/skills
+
+context:
+  base: ./CONTEXT.md
+  overlays:
+    claude-code: ./CONTEXT.claude-code.md
+    gemini-cli: ./CONTEXT.gemini-cli.md
+  children:
+    - path: ./packages/api
+      base: ./packages/api/CONTEXT.md
+      overlays:
+        claude-code: ./packages/api/CONTEXT.claude-code.md
+    - path: ./packages/web
+      base: ./packages/web/CONTEXT.md

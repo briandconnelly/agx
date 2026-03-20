@@ -1,0 +1,9 @@
+# Invalid: no backends declared (triggers ValidationError::NoBackends)
+name: broken-project
+version: 0.1.0
+description: This manifest has no backends
+
+plugins:
+  foo:
+    git: https://github.com/someone/plugin.git
+    tag: v1.0.0

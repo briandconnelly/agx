@@ -1,0 +1,191 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agx.dev/schemas/agent-environment.schema.json",
+  "title": "Agent Environment Manifest",
+  "description": "Schema for agent-environment.yml — the manifest for agx, the agent environment manager.",
+  "type": "object",
+  "required": ["name", "backends"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Project name (required)."
+    },
+    "version": {
+      "type": "string",
+      "description": "Project version (semver)."
+    },
+    "description": {
+      "type": "string",
+      "description": "Project description."
+    },
+    "backends": {
+      "type": "object",
+      "description": "Backend configurations. At least one is required.",
+      "additionalProperties": {
+        "$ref": "#/$defs/BackendConfig"
+      },
+      "minProperties": 1
+    },
+    "registries": {
+      "type": "object",
+      "description": "Named marketplace registries.",
+      "additionalProperties": {
+        "$ref": "#/$defs/RegistryConfig"
+      }
+    },
+    "plugins": {
+      "type": "object",
+      "description": "Plugin dependencies.",
+      "additionalProperties": {
+        "$ref": "#/$defs/PluginDependency"
+      }
+    },
+    "skills": {
+      "type": "object",
+      "description": "Skill dependencies.",
+      "additionalProperties": {
+        "$ref": "#/$defs/SkillDependency"
+      }
+    },
+    "agents": {
+      "type": "object",
+      "description": "Agent definitions.",
+      "additionalProperties": {
+        "$ref": "#/$defs/AgentDependency"
+      }
+    },
+    "mcp-servers": {
+      "type": "object",
+      "description": "MCP server configurations.",
+      "additionalProperties": {
+        "$ref": "#/$defs/McpServerConfig"
+      }
+    },
+    "settings": {
+      "type": "object",
+      "description": "Per-backend settings merged into generated config files.",
+      "additionalProperties": true
+    },
+    "paths": {
+      "$ref": "#/$defs/PathsConfig"
+    },
+    "context": {
+      "$ref": "#/$defs/ContextConfig"
+    }
+  },
+  "$defs": {
+    "BackendConfig": {
+      "type": "object",
+      "properties": {
+        "default": { "type": "boolean" },
+        "isolation": { "type": "string", "enum": ["strict", "permissive"] },
+        "model": {
+          "oneOf": [
+            { "type": "string" },
+            { "$ref": "#/$defs/ModelConfig" }
+          ]
+        }
+      }
+    },
+    "ModelConfig": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "string" },
+        "extended_context": { "type": "boolean" },
+        "effort": { "type": "string", "enum": ["low", "medium", "high"] },
+        "plan_model": { "type": "string" },
+        "available": { "type": "array", "items": { "type": "string" } },
+        "parameters": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "RegistryConfig": {
+      "type": "object",
+      "required": ["url"],
+      "properties": {
+        "url": { "type": "string", "format": "uri" },
+        "auth": { "type": "string" }
+      }
+    },
+    "PluginDependency": {
+      "type": "object",
+      "properties": {
+        "registry": { "type": "string" },
+        "version": { "type": "string" },
+        "git": { "type": "string", "format": "uri" },
+        "tag": { "type": "string" },
+        "branch": { "type": "string" },
+        "commit": { "type": "string" },
+        "include": { "$ref": "#/$defs/AssetFilter" },
+        "exclude": { "$ref": "#/$defs/AssetFilter" }
+      }
+    },
+    "AssetFilter": {
+      "type": "object",
+      "properties": {
+        "agents": { "type": "array", "items": { "type": "string" } },
+        "skills": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "SkillDependency": {
+      "type": "object",
+      "required": ["path"],
+      "properties": {
+        "git": { "type": "string", "format": "uri" },
+        "path": { "type": "string" },
+        "tag": { "type": "string" },
+        "branch": { "type": "string" },
+        "commit": { "type": "string" }
+      }
+    },
+    "AgentDependency": {
+      "type": "object",
+      "required": ["path"],
+      "properties": {
+        "git": { "type": "string", "format": "uri" },
+        "path": { "type": "string" },
+        "tag": { "type": "string" },
+        "branch": { "type": "string" },
+        "commit": { "type": "string" },
+        "model": { "type": "string" },
+        "parameters": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "McpServerConfig": {
+      "type": "object",
+      "properties": {
+        "url": { "type": "string", "format": "uri" },
+        "command": { "type": "string" },
+        "args": { "type": "array", "items": { "type": "string" } },
+        "env": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    },
+    "PathsConfig": {
+      "type": "object",
+      "properties": {
+        "agents": { "type": "string" },
+        "skills": { "type": "string" }
+      }
+    },
+    "ContextConfig": {
+      "type": "object",
+      "required": ["base"],
+      "properties": {
+        "base": { "type": "string" },
+        "overlays": { "type": "object", "additionalProperties": { "type": "string" } },
+        "children": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["path", "base"],
+            "properties": {
+              "path": { "type": "string" },
+              "base": { "type": "string" },
+              "overlays": { "type": "object", "additionalProperties": { "type": "string" } }
+            }
+          }
+        }
+      }
+    }
+  }
+}

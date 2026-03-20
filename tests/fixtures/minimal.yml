@@ -1,0 +1,5 @@
+# Minimal valid manifest: name + one backend
+name: minimal-project
+backends:
+  claude-code:
+    isolation: strict

@@ -1,0 +1,12 @@
+# Invalid: plugin references a registry that doesn't exist
+name: broken-project
+version: 0.1.0
+
+backends:
+  claude-code:
+    isolation: strict
+
+plugins:
+  my-plugin:
+    registry: nonexistent-registry
+    version: "^1.0.0"

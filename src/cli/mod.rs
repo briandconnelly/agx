@@ -1,0 +1,110 @@
+//! CLI argument parsing and command dispatch.
+
+pub mod add;
+pub mod backends_cmd;
+pub mod cache_cmd;
+pub mod check;
+pub mod clean;
+pub mod generate;
+pub mod info;
+pub mod init;
+pub mod install;
+pub mod list;
+pub mod lock;
+pub mod outdated;
+pub mod registry_cmd;
+pub mod remove;
+pub mod run;
+pub mod update;
+pub mod which_cmd;
+
+use clap::{Parser, Subcommand};
+
+/// agx — Agent Environment Manager
+///
+/// A package manager for AI agent environments. Manages plugins, skills,
+/// subagents, and MCP servers across agent frameworks like Claude Code
+/// and Gemini CLI.
+#[derive(Debug, Parser)]
+#[command(name = "agx", version, about, long_about = None)]
+pub struct Cli {
+    #[command(subcommand)]
+    pub command: Commands,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum Commands {
+    /// Initialize a new agx project or import existing configuration
+    Init(init::InitArgs),
+
+    /// Resolve, download, and generate backend configurations
+    Install(install::InstallArgs),
+
+    /// Regenerate backend configs from existing lockfile and cache
+    Generate(generate::GenerateArgs),
+
+    /// Resolve and write lockfile without downloading or generating
+    Lock(lock::LockArgs),
+
+    /// Add a dependency to the manifest
+    Add(add::AddArgs),
+
+    /// Remove a dependency from the manifest
+    Remove(remove::RemoveArgs),
+
+    /// Re-resolve dependencies within manifest constraints
+    Update(update::UpdateArgs),
+
+    /// Show the current dependency tree
+    List(list::ListArgs),
+
+    /// Validate manifest and detect conflicts
+    Check(check::CheckArgs),
+
+    /// Remove .agx/ and all generated backend directories
+    Clean(clean::CleanArgs),
+
+    /// Launch a backend in the managed environment
+    Run(run::RunArgs),
+
+    /// Cache management commands
+    Cache(cache_cmd::CacheArgs),
+
+    /// Registry management commands
+    Registry(registry_cmd::RegistryArgs),
+
+    /// Show details about an installed asset
+    Info(info::InfoArgs),
+
+    /// Show the resolved source and file path of an asset
+    Which(which_cmd::WhichArgs),
+
+    /// List assets with newer versions available
+    Outdated(outdated::OutdatedArgs),
+
+    /// List available backends
+    Backends(backends_cmd::BackendsArgs),
+}
+
+/// Dispatch a parsed CLI command to the appropriate handler.
+pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
+    match cli.command {
+        Commands::Init(args) => init::run(args),
+        Commands::Install(args) => install::run(args),
+        Commands::Generate(args) => generate::run(args),
+        Commands::Lock(args) => lock::run(args),
+        Commands::Add(args) => add::run(args),
+        Commands::Remove(args) => remove::run(args),
+        Commands::Update(args) => update::run(args),
+        Commands::List(args) => list::run(args),
+        Commands::Check(args) => check::run(args),
+        Commands::Clean(args) => clean::run(args),
+        Commands::Run(args) => run::run(args),
+        Commands::Cache(args) => cache_cmd::run(args),
+        Commands::Registry(args) => registry_cmd::run(args),
+        Commands::Info(args) => info::run(args),
+        Commands::Which(args) => which_cmd::run(args),
+        Commands::Outdated(args) => outdated::run(args),
+        Commands::Backends(args) => backends_cmd::run(args),
+    }
+}
