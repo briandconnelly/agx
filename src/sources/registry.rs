@@ -79,6 +79,57 @@ pub fn fetch_index(url: &str, cache_dir: &Path) -> Result<RegistryIndex> {
     Ok(index)
 }
 
+/// Fetch a registry index with optional commit pinning.
+///
+/// If `pin` is `Some`, the index is read from that specific commit SHA
+/// using `git show <pin>:marketplace.json` instead of HEAD. This ensures
+/// reproducibility even if the registry updates.
+pub fn fetch_index_pinned(url: &str, cache_dir: &Path, pin: Option<&str>) -> Result<RegistryIndex> {
+    if cache_dir.exists() {
+        git::fetch(cache_dir).context("updating registry index")?;
+    } else {
+        git::clone(url, cache_dir).context("cloning registry index")?;
+    }
+
+    let rev = pin.unwrap_or("HEAD");
+
+    // If pinned, verify the commit exists in the repo
+    if let Some(pin_sha) = pin {
+        let verify = std::process::Command::new("git")
+            .args(["rev-parse", "--verify", &format!("{pin_sha}^{{commit}}")])
+            .current_dir(cache_dir)
+            .output()
+            .context("verifying pinned commit")?;
+
+        if !verify.status.success() {
+            anyhow::bail!(
+                "pinned commit '{}' not found in registry at {}",
+                pin_sha,
+                cache_dir.display()
+            );
+        }
+    }
+
+    let output = std::process::Command::new("git")
+        .args(["show", &format!("{rev}:marketplace.json")])
+        .current_dir(cache_dir)
+        .output()
+        .context("reading marketplace.json from registry")?;
+
+    if !output.status.success() {
+        anyhow::bail!(
+            "marketplace.json not found at rev '{}' in registry at {}",
+            rev,
+            cache_dir.display()
+        );
+    }
+
+    let index: RegistryIndex = serde_json::from_slice(&output.stdout)
+        .context("parsing marketplace.json")?;
+
+    Ok(index)
+}
+
 /// Look up a plugin by name in a registry index.
 ///
 /// Returns a list of available versions sorted descending (newest first),
@@ -198,6 +249,15 @@ mod tests {
     #[test]
     fn test_parse_invalid_json() {
         assert!(parse_index("not json").is_err());
+    }
+
+    #[test]
+    fn test_fetch_index_pinned_none_delegates_to_head() {
+        // When pin is None, fetch_index_pinned should use HEAD,
+        // which is the same behavior as fetch_index.
+        // We can't test network calls, but we can verify the function signature
+        // compiles and accepts None.
+        let _: fn(&str, &Path, Option<&str>) -> Result<RegistryIndex> = fetch_index_pinned;
     }
 
     #[test]

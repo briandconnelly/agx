@@ -59,6 +59,14 @@ pub enum ValidationError {
     #[error("MCP server '{0}' specifies both url and command — use one or the other")]
     AmbiguousMcpSource(String),
 
+    /// The project name is empty.
+    #[error("project name must not be empty")]
+    EmptyName,
+
+    /// The project name contains invalid characters.
+    #[error("project name '{0}' contains invalid characters; use only alphanumeric, hyphens, and underscores")]
+    InvalidName(String),
+
     /// Context section exists but `base` path is empty.
     #[error("context section requires a non-empty base file path")]
     EmptyContextBase,
@@ -70,6 +78,10 @@ pub enum ValidationError {
     /// A settings entry references a backend not declared in `backends`.
     #[error("settings entry references undeclared backend '{0}'")]
     UndeclaredSettingsBackend(String),
+
+    /// A registry pin is not a valid hex SHA (must be 40 or 64 hex chars).
+    #[error("registry '{0}' has invalid pin '{1}': must be 40 or 64 hex characters")]
+    InvalidRegistryPin(String, String),
 }
 
 /// Validate a parsed manifest for structural correctness.
@@ -79,7 +91,9 @@ pub enum ValidationError {
 pub fn validate(manifest: &AgentEnvironment) -> Result<(), Vec<ValidationError>> {
     let mut errors = Vec::new();
 
+    validate_name(manifest, &mut errors);
     validate_backends(manifest, &mut errors);
+    validate_registries(manifest, &mut errors);
     validate_plugins(manifest, &mut errors);
     validate_skills(manifest, &mut errors);
     validate_agents(manifest, &mut errors);
@@ -119,9 +133,38 @@ pub fn check_version_constraints(manifest: &AgentEnvironment) -> Result<(), Vec<
     }
 }
 
+fn validate_name(manifest: &AgentEnvironment, errors: &mut Vec<ValidationError>) {
+    if manifest.name.is_empty() {
+        errors.push(ValidationError::EmptyName);
+        return;
+    }
+    let valid = manifest
+        .name
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_');
+    if !valid {
+        errors.push(ValidationError::InvalidName(manifest.name.clone()));
+    }
+}
+
 fn validate_backends(manifest: &AgentEnvironment, errors: &mut Vec<ValidationError>) {
     if manifest.backends.is_empty() {
         errors.push(ValidationError::NoBackends);
+    }
+}
+
+fn validate_registries(manifest: &AgentEnvironment, errors: &mut Vec<ValidationError>) {
+    for (name, reg) in &manifest.registries {
+        if let Some(ref pin) = reg.pin {
+            let valid_length = pin.len() == 40 || pin.len() == 64;
+            let all_hex = pin.chars().all(|c| c.is_ascii_hexdigit());
+            if !valid_length || !all_hex {
+                errors.push(ValidationError::InvalidRegistryPin(
+                    name.clone(),
+                    pin.clone(),
+                ));
+            }
+        }
     }
 }
 
@@ -409,6 +452,68 @@ mod tests {
         assert!(errs
             .iter()
             .any(|e| matches!(e, ValidationError::UndeclaredSettingsBackend(_))));
+    }
+
+    #[test]
+    fn rejects_empty_name() {
+        let m = parse("name: ''\nbackends:\n  claude-code: {}\n");
+        let errs = validate(&m).unwrap_err();
+        assert!(errs
+            .iter()
+            .any(|e| matches!(e, ValidationError::EmptyName)));
+    }
+
+    #[test]
+    fn rejects_invalid_name_characters() {
+        let m = parse("name: 'my project!'\nbackends:\n  claude-code: {}\n");
+        let errs = validate(&m).unwrap_err();
+        assert!(errs
+            .iter()
+            .any(|e| matches!(e, ValidationError::InvalidName(_))));
+    }
+
+    #[test]
+    fn accepts_valid_name_with_hyphens_and_underscores() {
+        let m = parse("name: my-cool_project123\nbackends:\n  claude-code: {}\n");
+        assert!(validate(&m).is_ok());
+    }
+
+    #[test]
+    fn accepts_valid_registry_pin_40_chars() {
+        let m = parse(
+            "name: test\nbackends:\n  claude-code: {}\nregistries:\n  official:\n    url: https://example.com\n    pin: abcdef1234567890abcdef1234567890abcdef12\n",
+        );
+        assert!(validate(&m).is_ok());
+    }
+
+    #[test]
+    fn accepts_valid_registry_pin_64_chars() {
+        let m = parse(
+            "name: test\nbackends:\n  claude-code: {}\nregistries:\n  official:\n    url: https://example.com\n    pin: abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890\n",
+        );
+        assert!(validate(&m).is_ok());
+    }
+
+    #[test]
+    fn rejects_registry_pin_wrong_length() {
+        let m = parse(
+            "name: test\nbackends:\n  claude-code: {}\nregistries:\n  official:\n    url: https://example.com\n    pin: abc123\n",
+        );
+        let errs = validate(&m).unwrap_err();
+        assert!(errs
+            .iter()
+            .any(|e| matches!(e, ValidationError::InvalidRegistryPin(_, _))));
+    }
+
+    #[test]
+    fn rejects_registry_pin_non_hex() {
+        let m = parse(
+            "name: test\nbackends:\n  claude-code: {}\nregistries:\n  official:\n    url: https://example.com\n    pin: xyz1231234567890abcdef1234567890abcdef12\n",
+        );
+        let errs = validate(&m).unwrap_err();
+        assert!(errs
+            .iter()
+            .any(|e| matches!(e, ValidationError::InvalidRegistryPin(_, _))));
     }
 
     #[test]

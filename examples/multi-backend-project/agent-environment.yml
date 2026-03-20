@@ -1,0 +1,30 @@
+name: multi-backend-demo
+version: 0.1.0
+description: A project configured for Claude Code, Gemini CLI, and generic backends
+
+backends:
+  claude-code:
+    default: true
+    isolation: strict
+    model:
+      id: sonnet
+      effort: high
+      plan_model: opus
+  gemini-cli:
+    isolation: permissive
+  generic: {}
+
+skills:
+  shared-skill:
+    path: ./skills/shared-skill
+
+mcp-servers:
+  filesystem:
+    command: npx
+    args: ["@anthropic-ai/mcp-server-filesystem", "./src"]
+
+context:
+  base: ./CONTEXT.md
+  overlays:
+    claude-code: ./CONTEXT.claude-code.md
+    gemini-cli: ./CONTEXT.gemini-cli.md

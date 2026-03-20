@@ -5,13 +5,17 @@ pub mod backends_cmd;
 pub mod cache_cmd;
 pub mod check;
 pub mod clean;
+pub mod completions;
+pub mod diff;
 pub mod generate;
+pub mod graph;
 pub mod info;
 pub mod init;
 pub mod install;
 pub mod list;
 pub mod lock;
 pub mod outdated;
+pub mod publish;
 pub mod registry_cmd;
 pub mod remove;
 pub mod run;
@@ -40,6 +44,9 @@ pub enum Commands {
     /// Resolve, download, and generate backend configurations
     Install(install::InstallArgs),
 
+    /// Show what would change if `agx generate` were run now
+    Diff(diff::DiffArgs),
+
     /// Regenerate backend configs from existing lockfile and cache
     Generate(generate::GenerateArgs),
 
@@ -54,6 +61,9 @@ pub enum Commands {
 
     /// Re-resolve dependencies within manifest constraints
     Update(update::UpdateArgs),
+
+    /// Visualize the dependency graph (tree or DOT format)
+    Graph(graph::GraphArgs),
 
     /// Show the current dependency tree
     List(list::ListArgs),
@@ -82,8 +92,14 @@ pub enum Commands {
     /// List assets with newer versions available
     Outdated(outdated::OutdatedArgs),
 
+    /// Publish an asset to a marketplace registry
+    Publish(publish::PublishArgs),
+
     /// List available backends
     Backends(backends_cmd::BackendsArgs),
+
+    /// Generate shell completions
+    Completions(completions::CompletionsArgs),
 }
 
 /// Dispatch a parsed CLI command to the appropriate handler.
@@ -91,11 +107,13 @@ pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
         Commands::Init(args) => init::run(args),
         Commands::Install(args) => install::run(args),
+        Commands::Diff(args) => diff::run(args),
         Commands::Generate(args) => generate::run(args),
         Commands::Lock(args) => lock::run(args),
         Commands::Add(args) => add::run(args),
         Commands::Remove(args) => remove::run(args),
         Commands::Update(args) => update::run(args),
+        Commands::Graph(args) => graph::run(args),
         Commands::List(args) => list::run(args),
         Commands::Check(args) => check::run(args),
         Commands::Clean(args) => clean::run(args),
@@ -105,6 +123,8 @@ pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
         Commands::Info(args) => info::run(args),
         Commands::Which(args) => which_cmd::run(args),
         Commands::Outdated(args) => outdated::run(args),
+        Commands::Publish(args) => publish::run(args),
         Commands::Backends(args) => backends_cmd::run(args),
+        Commands::Completions(args) => completions::run(args),
     }
 }

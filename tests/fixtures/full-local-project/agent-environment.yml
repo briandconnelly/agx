@@ -1,0 +1,18 @@
+name: example-project
+backends:
+  claude-code:
+    isolation: strict
+    model: sonnet
+  gemini-cli:
+    model: gemini-2.5-pro
+skills:
+  deploy-checklist:
+    path: ./skills/deploy-checklist
+agents:
+  code-reviewer:
+    path: ./agents/code-reviewer.md
+    model: opus
+context:
+  base: ./CONTEXT.md
+  overlays:
+    claude-code: ./CONTEXT.claude.md

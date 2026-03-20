@@ -214,6 +214,7 @@ mod tests {
             settings: BTreeMap::new(),
             paths: None,
             context: None,
+            hooks: None,
         }
     }
 

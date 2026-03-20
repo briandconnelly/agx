@@ -1,0 +1,29 @@
+name: my-claude-project
+version: 0.1.0
+description: A web application with Claude Code as the primary agent
+
+backends:
+  claude-code:
+    isolation: strict
+    model: sonnet
+
+skills:
+  deploy-checklist:
+    path: ./skills/deploy-checklist
+
+agents:
+  code-reviewer:
+    path: ./agents/code-reviewer.md
+    model: opus
+
+mcp-servers:
+  filesystem:
+    command: npx
+    args: ["@anthropic-ai/mcp-server-filesystem", "./src"]
+
+context:
+  base: ./CONTEXT.md
+
+hooks:
+  post-install:
+    - echo "Installation complete!"

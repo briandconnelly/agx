@@ -1,8 +1,11 @@
 //! Backend trait and implementations for per-framework code generation.
 
 pub mod claude_code;
+pub mod codex;
+pub mod cursor;
 pub mod gemini_cli;
 pub mod generic;
+pub mod windsurf;
 
 use anyhow::Result;
 use serde_json::{json, Map, Value};
@@ -48,8 +51,11 @@ pub trait Backend {
 pub fn get_backend(name: &str) -> Option<Box<dyn Backend>> {
     match name {
         "claude-code" => Some(Box::new(claude_code::ClaudeCodeBackend)),
+        "codex" => Some(Box::new(codex::CodexBackend)),
+        "cursor" => Some(Box::new(cursor::CursorBackend)),
         "gemini-cli" => Some(Box::new(gemini_cli::GeminiCliBackend)),
         "generic" => Some(Box::new(generic::GenericBackend)),
+        "windsurf" => Some(Box::new(windsurf::WindsurfBackend)),
         _ => None,
     }
 }

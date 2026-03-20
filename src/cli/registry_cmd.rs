@@ -40,6 +40,11 @@ pub enum RegistryCommands {
         /// Specific registry to refresh (all if omitted)
         name: Option<String>,
     },
+    /// Pin a registry to its current commit SHA
+    Pin {
+        /// Registry name
+        name: String,
+    },
 }
 
 pub fn run(args: RegistryArgs) -> Result<()> {
@@ -48,6 +53,7 @@ pub fn run(args: RegistryArgs) -> Result<()> {
         RegistryCommands::Remove { name } => run_remove(&name),
         RegistryCommands::List => run_list(),
         RegistryCommands::Refresh { name } => run_refresh(name.as_deref()),
+        RegistryCommands::Pin { name } => run_pin(&name),
     }
 }
 
@@ -67,6 +73,7 @@ fn run_add(name: &str, url: &str, auth: Option<&str>) -> Result<()> {
         RegistryConfig {
             url: url.to_string(),
             auth: auth.map(|s| s.to_string()),
+            pin: None,
         },
     );
 
@@ -213,6 +220,67 @@ fn run_refresh(name: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+/// Pin a registry to its current HEAD commit SHA.
+fn run_pin(name: &str) -> Result<()> {
+    let cwd = std::env::current_dir().context("getting current directory")?;
+    let manifest_path = config::find_manifest(&cwd)
+        .context("no agent-environment.yml found (run `agx init` first)")?;
+    let mut env = manifest::load(&manifest_path)?;
+
+    let reg_config = env
+        .registries
+        .get(name)
+        .with_context(|| format!("registry '{}' not found in manifest", name))?;
+
+    let reg_cache = cache::registry_dir()?;
+    let slug = agx::sources::git::url_to_slug(&reg_config.url);
+    let reg_dir = reg_cache.join(&slug);
+
+    if !reg_dir.exists() {
+        bail!(
+            "registry '{}' is not cached; run `agx registry refresh {}` first",
+            name,
+            name
+        );
+    }
+
+    // Get the current HEAD commit SHA
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&reg_dir)
+        .output()
+        .context("reading HEAD commit from cached registry")?;
+
+    if !output.status.success() {
+        bail!(
+            "failed to read HEAD commit from cached registry '{}'",
+            name
+        );
+    }
+
+    let sha = String::from_utf8(output.stdout)
+        .context("invalid UTF-8 in git output")?
+        .trim()
+        .to_string();
+
+    // Update the manifest
+    let reg = env
+        .registries
+        .get_mut(name)
+        .expect("registry must exist (checked above)");
+    reg.pin = Some(sha.clone());
+
+    manifest::save(&env, &manifest_path)?;
+    println!(
+        "{} Pinned registry '{}' to {}",
+        style("✓").green(),
+        style(name).bold(),
+        style(&sha).dim()
+    );
+
+    Ok(())
+}
+
 /// Resolve a registry URL, embedding an auth token if needed.
 ///
 /// For registries with `auth: token`, checks for
@@ -278,6 +346,7 @@ mod tests {
             settings: BTreeMap::new(),
             paths: None,
             context: None,
+            hooks: None,
         }
     }
 
@@ -291,6 +360,7 @@ mod tests {
             RegistryConfig {
                 url: "https://github.com/anthropics/claude-plugins-official".to_string(),
                 auth: None,
+                pin: None,
             },
         );
 
@@ -309,6 +379,7 @@ mod tests {
             RegistryConfig {
                 url: "https://github.com/anthropics/claude-plugins-official".to_string(),
                 auth: None,
+                pin: None,
             },
         );
         let mut env = make_manifest(registries);
@@ -326,6 +397,7 @@ mod tests {
             RegistryConfig {
                 url: "https://example.com".to_string(),
                 auth: None,
+                pin: None,
             },
         );
         let mut env = make_manifest(registries);

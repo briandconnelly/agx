@@ -7,12 +7,26 @@ use anyhow::{Context, Result};
 use std::path::Path;
 use types::Lockfile;
 
+/// The maximum lockfile version this build of agx supports.
+const SUPPORTED_LOCKFILE_VERSION: u32 = 1;
+
 /// Read and parse a lockfile from a file path.
+///
+/// Returns an error if the lockfile version is higher than what this build supports.
 pub fn load(path: &Path) -> Result<Lockfile> {
     let content =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let lockfile: Lockfile =
         serde_yaml::from_str(&content).with_context(|| format!("parsing {}", path.display()))?;
+
+    if lockfile.lockfile_version > SUPPORTED_LOCKFILE_VERSION {
+        anyhow::bail!(
+            "lockfile was created by a newer version of agx (lockfile_version: {}, supported: {}); please upgrade",
+            lockfile.lockfile_version,
+            SUPPORTED_LOCKFILE_VERSION
+        );
+    }
+
     Ok(lockfile)
 }
 
@@ -102,6 +116,25 @@ mod tests {
 
     fn empty_lockfile() -> Lockfile {
         Lockfile::new()
+    }
+
+    #[test]
+    fn load_future_lockfile_version_returns_error() {
+        let yaml = r#"
+lockfile_version: 99
+generated_at: "2026-03-19T10:30:00Z"
+agx_version: "99.0.0"
+"#;
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), yaml).unwrap();
+
+        let result = load(tmp.path());
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("newer version of agx"),
+            "expected version error, got: {msg}"
+        );
     }
 
     #[test]

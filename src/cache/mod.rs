@@ -99,22 +99,47 @@ pub fn store_agent(name: &str, commit: &str, source_path: &Path) -> Result<PathB
     Ok(dest_dir)
 }
 
-/// Look up a cached plugin. Returns `Some(path)` if the cache entry exists.
+/// Look up a cached plugin. Returns `Some(path)` if the cache entry exists
+/// and is non-empty. An empty directory is treated as missing (returns `None`).
 pub fn get_plugin(name: &str, version: &str) -> Result<Option<PathBuf>> {
     let path = plugins_dir()?.join(name).join(version);
-    Ok(if path.exists() { Some(path) } else { None })
+    Ok(if path.exists() && !is_dir_empty(&path)? {
+        Some(path)
+    } else {
+        None
+    })
 }
 
-/// Look up a cached skill. Returns `Some(path)` if the cache entry exists.
+/// Look up a cached skill. Returns `Some(path)` if the cache entry exists
+/// and is non-empty. An empty directory is treated as missing (returns `None`).
 pub fn get_skill(name: &str, commit: &str) -> Result<Option<PathBuf>> {
     let path = skills_dir()?.join(name).join(commit);
-    Ok(if path.exists() { Some(path) } else { None })
+    Ok(if path.exists() && !is_dir_empty(&path)? {
+        Some(path)
+    } else {
+        None
+    })
 }
 
-/// Look up a cached agent. Returns `Some(path)` if the cache entry exists.
+/// Look up a cached agent. Returns `Some(path)` if the cache entry exists
+/// and is non-empty. An empty directory is treated as missing (returns `None`).
 pub fn get_agent(name: &str, commit: &str) -> Result<Option<PathBuf>> {
     let path = agents_dir()?.join(name).join(commit);
-    Ok(if path.exists() { Some(path) } else { None })
+    Ok(if path.exists() && !is_dir_empty(&path)? {
+        Some(path)
+    } else {
+        None
+    })
+}
+
+/// Check if a directory exists but contains no files.
+fn is_dir_empty(path: &Path) -> Result<bool> {
+    if !path.is_dir() {
+        return Ok(false);
+    }
+    let mut entries = std::fs::read_dir(path)
+        .with_context(|| format!("reading directory {}", path.display()))?;
+    Ok(entries.next().is_none())
 }
 
 /// Remove all cached data.
@@ -426,6 +451,24 @@ mod tests {
         with_temp_cache(|_cache| {
             let entries = list_cached().unwrap();
             assert!(entries.is_empty());
+        });
+    }
+
+    #[test]
+    fn empty_cache_dir_returns_none() {
+        with_temp_cache(|_cache| {
+            // Create empty directories that look like cache entries
+            let plugin_path = plugins_dir().unwrap().join("empty-plugin").join("1.0.0");
+            fs::create_dir_all(&plugin_path).unwrap();
+            let skill_path = skills_dir().unwrap().join("empty-skill").join("abc123");
+            fs::create_dir_all(&skill_path).unwrap();
+            let agent_path = agents_dir().unwrap().join("empty-agent").join("def456");
+            fs::create_dir_all(&agent_path).unwrap();
+
+            // Empty dirs should be treated as missing
+            assert!(get_plugin("empty-plugin", "1.0.0").unwrap().is_none());
+            assert!(get_skill("empty-skill", "abc123").unwrap().is_none());
+            assert!(get_agent("empty-agent", "def456").unwrap().is_none());
         });
     }
 

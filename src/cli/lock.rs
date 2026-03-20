@@ -77,9 +77,19 @@ fn build_resolve_context(
 
     // 1. Fetch registry indexes
     for (reg_name, reg_config) in &manifest.registries {
+        if config::is_offline() {
+            let reg_dir = reg_cache.join(git::url_to_slug(&reg_config.url));
+            if !reg_dir.exists() {
+                anyhow::bail!(
+                    "network operations disabled (AGX_OFFLINE=1) and registry '{reg_name}' is not cached; \
+                     ensure all registries are cached or unset AGX_OFFLINE"
+                );
+            }
+        }
         eprintln!("fetching registry '{reg_name}'...");
         let reg_dir = reg_cache.join(git::url_to_slug(&reg_config.url));
-        let index = registry::fetch_index(&reg_config.url, &reg_dir)
+        let pin = reg_config.pin.as_deref();
+        let index = registry::fetch_index_pinned(&reg_config.url, &reg_dir, pin)
             .with_context(|| format!("fetching registry '{reg_name}'"))?;
 
         let mut plugin_versions_map: BTreeMap<String, Vec<PluginVersionInfo>> = BTreeMap::new();
@@ -147,10 +157,18 @@ fn build_resolve_context(
 
         // Clone or fetch the bare repo
         if repo_path.exists() {
-            eprintln!("updating git repo {slug}...");
-            git::fetch(&repo_path)
-                .with_context(|| format!("fetching git repo '{url}'"))?;
+            if !config::is_offline() {
+                eprintln!("updating git repo {slug}...");
+                git::fetch(&repo_path)
+                    .with_context(|| format!("fetching git repo '{url}'"))?;
+            }
         } else {
+            if config::is_offline() {
+                anyhow::bail!(
+                    "network operations disabled (AGX_OFFLINE=1) and git repo '{url}' is not cached; \
+                     ensure all dependencies are cached or unset AGX_OFFLINE"
+                );
+            }
             eprintln!("cloning git repo {slug}...");
             std::fs::create_dir_all(&git_cache)
                 .context("creating git cache directory")?;

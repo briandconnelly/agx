@@ -55,6 +55,10 @@ pub struct AgentEnvironment {
     /// Context file management (CLAUDE.md, GEMINI.md, etc.).
     #[serde(default)]
     pub context: Option<ContextConfig>,
+
+    /// Lifecycle hooks (pre/post install/generate).
+    #[serde(default)]
+    pub hooks: Option<HooksConfig>,
 }
 
 /// Configuration for a single backend.
@@ -133,6 +137,10 @@ pub struct RegistryConfig {
     /// Authentication method (e.g. "token").
     #[serde(default)]
     pub auth: Option<String>,
+
+    /// Pin the registry index to a specific commit SHA for reproducibility.
+    #[serde(default)]
+    pub pin: Option<String>,
 }
 
 /// A plugin dependency — from a registry or from git.
@@ -298,6 +306,28 @@ pub struct ChildContext {
     pub overlays: BTreeMap<String, String>,
 }
 
+/// Lifecycle hooks configuration.
+///
+/// Allows running shell commands before/after install and generate operations.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct HooksConfig {
+    /// Commands to run before the install (lock/fetch) step.
+    #[serde(default, rename = "pre-install")]
+    pub pre_install: Vec<String>,
+
+    /// Commands to run after the install (generate) step.
+    #[serde(default, rename = "post-install")]
+    pub post_install: Vec<String>,
+
+    /// Commands to run before backend generation.
+    #[serde(default, rename = "pre-generate")]
+    pub pre_generate: Vec<String>,
+
+    /// Commands to run after backend generation.
+    #[serde(default, rename = "post-generate")]
+    pub post_generate: Vec<String>,
+}
+
 impl SkillDependency {
     /// Returns true if this is a local (path-based) dependency.
     pub fn is_local(&self) -> bool {
@@ -445,5 +475,91 @@ context:
         assert_eq!(env.mcp_servers.len(), 2);
         assert!(env.agents["my-reviewer"].model.as_deref() == Some("opus"));
         assert!(env.skills["deploy-checklist"].is_local());
+    }
+
+    #[test]
+    fn parse_registry_with_pin() {
+        let yaml = r#"
+name: test
+backends:
+  claude-code: {}
+registries:
+  official:
+    url: https://github.com/anthropics/claude-plugins-official
+    pin: abcdef1234567890abcdef1234567890abcdef12
+"#;
+        let env: AgentEnvironment = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            env.registries["official"].pin.as_deref(),
+            Some("abcdef1234567890abcdef1234567890abcdef12")
+        );
+    }
+
+    #[test]
+    fn parse_registry_pin_defaults_to_none() {
+        let yaml = r#"
+name: test
+backends:
+  claude-code: {}
+registries:
+  official:
+    url: https://github.com/anthropics/claude-plugins-official
+"#;
+        let env: AgentEnvironment = serde_yaml::from_str(yaml).unwrap();
+        assert!(env.registries["official"].pin.is_none());
+    }
+
+    #[test]
+    fn parse_manifest_with_hooks() {
+        let yaml = r#"
+name: test
+backends:
+  claude-code: {}
+hooks:
+  pre-install:
+    - echo "Installing..."
+  post-install:
+    - ./scripts/verify.sh
+  pre-generate:
+    - echo "Generating..."
+  post-generate:
+    - ./scripts/post.sh
+    - echo "Done!"
+"#;
+        let env: AgentEnvironment = serde_yaml::from_str(yaml).unwrap();
+        let hooks = env.hooks.unwrap();
+        assert_eq!(hooks.pre_install, vec!["echo \"Installing...\""]);
+        assert_eq!(hooks.post_install, vec!["./scripts/verify.sh"]);
+        assert_eq!(hooks.pre_generate, vec!["echo \"Generating...\""]);
+        assert_eq!(hooks.post_generate.len(), 2);
+    }
+
+    #[test]
+    fn hooks_default_to_none_when_omitted() {
+        let yaml = r#"
+name: test
+backends:
+  claude-code: {}
+"#;
+        let env: AgentEnvironment = serde_yaml::from_str(yaml).unwrap();
+        assert!(env.hooks.is_none());
+    }
+
+    #[test]
+    fn hooks_fields_default_to_empty() {
+        let yaml = r#"
+name: test
+backends:
+  claude-code: {}
+hooks:
+  pre-install:
+    - echo "hi"
+"#;
+        let env: AgentEnvironment = serde_yaml::from_str(yaml).unwrap();
+        let hooks = env.hooks.unwrap();
+        assert_eq!(hooks.pre_install.len(), 1);
+        assert!(hooks.post_install.is_empty());
+        assert!(hooks.pre_generate.is_empty());
+        assert!(hooks.post_generate.is_empty());
     }
 }

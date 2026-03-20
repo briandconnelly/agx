@@ -41,7 +41,7 @@ pub struct InitArgs {
 // Known backends presented in the wizard
 // ---------------------------------------------------------------------------
 
-const KNOWN_BACKENDS: &[&str] = &["claude-code", "gemini-cli", "codex", "cursor"];
+const KNOWN_BACKENDS: &[&str] = &["claude-code", "gemini-cli", "codex", "cursor", "windsurf"];
 
 // ---------------------------------------------------------------------------
 // Keywords that mark a CLAUDE.md section as Claude-specific (for splitting)
@@ -192,7 +192,7 @@ fn run_new_project_flow(cwd: &Path) -> Result<()> {
             .interact_text()
             .context("registry name prompt")?;
 
-        registries.insert(reg_name, RegistryConfig { url, auth: None });
+        registries.insert(reg_name, RegistryConfig { url, auth: None, pin: None });
     }
 
     // Build manifest struct.
@@ -235,6 +235,7 @@ fn run_new_project_flow(cwd: &Path) -> Result<()> {
         settings: BTreeMap::new(),
         paths: None,
         context,
+        hooks: None,
     };
 
     // Write files.
@@ -390,6 +391,7 @@ fn run_import_flow(cwd: &Path, scan: &ScanResult) -> Result<()> {
         settings,
         paths: None,
         context,
+        hooks: None,
     };
 
     // Write files.
@@ -1141,6 +1143,7 @@ mod tests {
             settings: BTreeMap::new(),
             paths: None,
             context: None,
+            hooks: None,
         };
 
         write_manifest(dir.path(), &manifest).unwrap();
@@ -1202,6 +1205,7 @@ mod tests {
                 },
                 children: vec![],
             }),
+            hooks: None,
         };
 
         write_manifest(dir.path(), &manifest).unwrap();

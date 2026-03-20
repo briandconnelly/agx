@@ -4,6 +4,7 @@ use agx::backends::{get_backend, ResolvedEnvironment};
 use agx::cache;
 use agx::config;
 use agx::context;
+use agx::hooks;
 use agx::lockfile;
 use agx::lockfile::types::{LockedSource, Lockfile};
 use agx::manifest;
@@ -39,6 +40,11 @@ pub fn run(_args: InstallArgs) -> anyhow::Result<()> {
 
     let manifest = manifest::load(&manifest_path)?;
 
+    // Run pre-install hooks
+    let hook_cfg = manifest.hooks.as_ref();
+    let pre_install = hook_cfg.map(|h| h.pre_install.as_slice()).unwrap_or_default();
+    hooks::run_hooks("pre-install", pre_install)?;
+
     // Load or generate lockfile
     let lockfile_path = project_root.join(config::LOCKFILE_FILE);
     let lockfile = load_or_lock(&manifest, &project_root, &lockfile_path)?;
@@ -52,6 +58,10 @@ pub fn run(_args: InstallArgs) -> anyhow::Result<()> {
     // Generate context files
     context::generate_context_files(&manifest, &project_root)
         .context("generating context files")?;
+
+    // Run post-install hooks
+    let post_install = hook_cfg.map(|h| h.post_install.as_slice()).unwrap_or_default();
+    hooks::run_hooks("post-install", post_install)?;
 
     eprintln!("install complete.");
     Ok(())
@@ -202,8 +212,15 @@ fn extract_from_git_cache(
         // The bare repo should have been cloned during lock, but if the
         // cache was cleaned, we need to re-clone. We don't have the URL
         // handy when url_or_name is a name, so best-effort.
+        if config::is_offline() {
+            anyhow::bail!(
+                "git cache missing for '{}' and network operations are disabled (AGX_OFFLINE=1); \
+                 ensure all dependencies are cached or unset AGX_OFFLINE",
+                url_or_name
+            );
+        }
         anyhow::bail!(
-            "git cache missing for '{}'; run `agx lock` first",
+            "git cache missing for '{}'; run `agx lock` to re-fetch",
             url_or_name
         );
     }

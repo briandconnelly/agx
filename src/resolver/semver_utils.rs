@@ -20,23 +20,23 @@ pub enum ResolverError {
     },
 
     /// A version constraint string could not be parsed.
-    #[error("invalid version constraint: {0}")]
+    #[error("invalid version constraint '{0}'; expected semver like '^1.0.0', '~1.2', '>=1.0.0, <2.0.0', or '1.0.0'")]
     InvalidConstraint(String),
 
     /// A named dependency was not found in the manifest.
-    #[error("dependency '{name}' not found in manifest")]
+    #[error("dependency '{name}' not found in manifest; check your agent-environment.yml")]
     NotFound {
         name: String,
     },
 
     /// A referenced registry was not found in the resolve context.
-    #[error("registry '{registry}' not found in resolve context")]
+    #[error("registry '{registry}' not found in resolve context; run `agx lock` to refresh")]
     RegistryNotFound {
         registry: String,
     },
 
     /// A git ref could not be resolved to a commit SHA.
-    #[error("git ref '{git_ref}' for '{url}' was not pre-resolved")]
+    #[error("git ref '{git_ref}' for '{url}' was not pre-resolved; run `agx lock` to resolve")]
     GitRefNotResolved {
         url: String,
         git_ref: String,

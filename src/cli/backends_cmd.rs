@@ -17,11 +17,14 @@ const BUILTIN_BACKENDS: &[(&str, &str)] = &[
         "claude-code",
         "Claude Code (.claude/, .mcp.json, CLAUDE.md)",
     ),
+    ("codex", "Codex (.codex/, AGENTS.md)"),
+    ("cursor", "Cursor (.cursor/rules/, AGENTS.md)"),
     ("gemini-cli", "Gemini CLI (.gemini/, GEMINI.md)"),
     (
         "generic",
-        "Generic AGENTS.md (Codex, Cursor, Windsurf)",
+        "Generic AGENTS.md (Windsurf, etc.)",
     ),
+    ("windsurf", "Windsurf (Codeium)"),
 ];
 
 pub fn run(_args: BackendsArgs) -> Result<()> {
@@ -96,10 +99,13 @@ mod tests {
 
     #[test]
     fn builtin_backends_listed() {
-        assert_eq!(BUILTIN_BACKENDS.len(), 3);
+        assert_eq!(BUILTIN_BACKENDS.len(), 6);
         assert_eq!(BUILTIN_BACKENDS[0].0, "claude-code");
-        assert_eq!(BUILTIN_BACKENDS[1].0, "gemini-cli");
-        assert_eq!(BUILTIN_BACKENDS[2].0, "generic");
+        assert_eq!(BUILTIN_BACKENDS[1].0, "codex");
+        assert_eq!(BUILTIN_BACKENDS[2].0, "cursor");
+        assert_eq!(BUILTIN_BACKENDS[3].0, "gemini-cli");
+        assert_eq!(BUILTIN_BACKENDS[4].0, "generic");
+        assert_eq!(BUILTIN_BACKENDS[5].0, "windsurf");
     }
 
     #[test]

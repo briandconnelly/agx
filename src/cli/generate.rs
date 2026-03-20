@@ -3,6 +3,7 @@
 use agx::backends::{get_backend, ResolvedEnvironment};
 use agx::config;
 use agx::context;
+use agx::hooks;
 use agx::lockfile::types::Lockfile;
 use agx::manifest::types::AgentEnvironment;
 use anyhow::{bail, Context};
@@ -68,6 +69,11 @@ pub fn run(args: GenerateArgs) -> anyhow::Result<()> {
         manifest.backends.keys().collect()
     };
 
+    // Run pre-generate hooks
+    let hook_cfg = manifest.hooks.as_ref();
+    let pre_generate = hook_cfg.map(|h| h.pre_generate.as_slice()).unwrap_or_default();
+    hooks::run_hooks("pre-generate", pre_generate)?;
+
     let output_dir = PathBuf::from(project_root);
 
     for name in &backend_names {
@@ -85,6 +91,10 @@ pub fn run(args: GenerateArgs) -> anyhow::Result<()> {
     // Generate context files (CLAUDE.md, GEMINI.md, AGENTS.md, etc.)
     context::generate_context_files(&manifest, project_root)
         .context("generating context files")?;
+
+    // Run post-generate hooks
+    let post_generate = hook_cfg.map(|h| h.post_generate.as_slice()).unwrap_or_default();
+    hooks::run_hooks("post-generate", post_generate)?;
 
     eprintln!(
         "generated configurations for {} backend(s).",
