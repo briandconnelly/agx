@@ -28,10 +28,13 @@ pub struct Lockfile {
     pub agents: BTreeMap<String, LockedAgent>,
 }
 
-/// A resolved plugin pinned to an exact version.
+/// A resolved dependency entry pinned to an exact version or commit.
+///
+/// Plugins, skills, and agents share the same lockfile structure: a source
+/// descriptor, an optional git commit SHA, and an optional integrity hash.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LockedPlugin {
-    /// Source information (registry name + resolved version, or git URL).
+pub struct LockedEntry {
+    /// Source information (registry name + resolved version, git URL, npm package, or local path).
     pub source: LockedSource,
 
     /// Exact git commit SHA.
@@ -43,37 +46,22 @@ pub struct LockedPlugin {
     pub integrity: Option<String>,
 }
 
-/// A resolved skill pinned to an exact commit.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LockedSkill {
-    /// Source information.
-    pub source: LockedSource,
+/// Type alias for backward compatibility — a locked plugin entry.
+pub type LockedPlugin = LockedEntry;
 
-    /// Exact git commit SHA.
-    #[serde(default)]
-    pub git_commit: Option<String>,
+/// Type alias for backward compatibility — a locked skill entry.
+pub type LockedSkill = LockedEntry;
 
-    /// SHA-256 integrity hash.
-    #[serde(default)]
-    pub integrity: Option<String>,
-}
-
-/// A resolved agent pinned to an exact commit.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LockedAgent {
-    /// Source information.
-    pub source: LockedSource,
-
-    /// Exact git commit SHA.
-    #[serde(default)]
-    pub git_commit: Option<String>,
-
-    /// SHA-256 integrity hash.
-    #[serde(default)]
-    pub integrity: Option<String>,
-}
+/// Type alias for backward compatibility — a locked agent entry.
+pub type LockedAgent = LockedEntry;
 
 /// Source descriptor for a locked entry.
+///
+/// **Note:** This enum uses `#[serde(untagged)]`, which means variant order
+/// matters during deserialization. Serde tries each variant in declaration
+/// order and uses the first one that successfully deserializes. Place more
+/// specific variants (with required distinguishing fields) before less
+/// specific ones to avoid incorrect matches.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum LockedSource {
@@ -122,15 +110,39 @@ impl Default for Lockfile {
     }
 }
 
-/// Simple ISO 8601 timestamp without pulling in chrono.
+/// Produce an ISO 8601 UTC timestamp (e.g. `"2026-03-19T10:30:00Z"`) without
+/// pulling in the chrono crate.
 fn chrono_now() -> String {
-    // For the MVP, we use a placeholder. A proper implementation would use
-    // std::time::SystemTime or the chrono crate.
     use std::time::SystemTime;
-    let duration = SystemTime::now()
+    let secs = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default();
-    format!("{}Z", duration.as_secs())
+        .unwrap_or_default()
+        .as_secs();
+
+    // Days since epoch
+    let days = secs / 86400;
+    let time_secs = secs % 86400;
+    let hours = time_secs / 3600;
+    let minutes = (time_secs % 3600) / 60;
+    let seconds = time_secs % 60;
+
+    // Convert days to year/month/day.
+    // Algorithm from http://howardhinnant.github.io/date_algorithms.html
+    let z = days + 719468;
+    let era = z / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        y, m, d, hours, minutes, seconds
+    )
 }
 
 #[cfg(test)]

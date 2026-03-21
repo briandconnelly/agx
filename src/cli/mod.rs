@@ -7,6 +7,7 @@ pub mod check;
 pub mod clean;
 pub mod completions;
 pub mod diff;
+pub mod format_helpers;
 pub mod generate;
 pub mod graph;
 pub mod info;
@@ -22,7 +23,59 @@ pub mod run;
 pub mod update;
 pub mod which_cmd;
 
+use std::path::PathBuf;
+
+use anyhow::Context;
 use clap::{Parser, Subcommand};
+
+/// Common project context loaded by most CLI commands.
+///
+/// Encapsulates the boilerplate of finding the manifest, loading it,
+/// determining the project root, and optionally loading the lockfile.
+pub struct ProjectContext {
+    /// The parsed agent-environment manifest.
+    pub manifest: agx::manifest::types::AgentEnvironment,
+    /// Absolute path to the manifest file.
+    pub manifest_path: PathBuf,
+    /// Directory containing the manifest (project root).
+    pub project_root: PathBuf,
+    /// The lockfile, if one exists on disk.
+    pub lockfile: Option<agx::lockfile::types::Lockfile>,
+}
+
+impl ProjectContext {
+    /// Load the project context from the current directory.
+    ///
+    /// Finds the manifest by walking up from `cwd`, loads it, and optionally
+    /// loads the lockfile if it exists alongside the manifest.
+    pub fn load() -> anyhow::Result<Self> {
+        let cwd = std::env::current_dir().context("getting current directory")?;
+        let manifest_path = agx::config::find_manifest(&cwd).ok_or_else(|| {
+            anyhow::anyhow!(
+                "no {} found in {} or parent directories",
+                agx::config::MANIFEST_FILE,
+                cwd.display()
+            )
+        })?;
+        let project_root = manifest_path
+            .parent()
+            .expect("manifest must have a parent directory")
+            .to_path_buf();
+        let manifest = agx::manifest::load(&manifest_path)?;
+        let lockfile_path = project_root.join(agx::config::LOCKFILE_FILE);
+        let lockfile = if lockfile_path.exists() {
+            Some(agx::lockfile::load(&lockfile_path)?)
+        } else {
+            None
+        };
+        Ok(Self {
+            manifest,
+            manifest_path,
+            project_root,
+            lockfile,
+        })
+    }
+}
 
 /// agx — Agent Environment Manager
 ///

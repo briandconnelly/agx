@@ -12,6 +12,8 @@ use agx::manifest::types::{
     PluginDependency, SkillDependency,
 };
 
+use super::format_helpers::{format_agent_source, format_mcp_source, format_plugin_source, format_skill_source};
+
 /// Show the dependency graph of the current project.
 #[derive(Debug, Args)]
 pub struct GraphArgs {
@@ -305,101 +307,6 @@ fn format_locked_info(source: &lockfile::types::LockedSource, commit: Option<&st
     }
 }
 
-// --- Source formatting (duplicated from list.rs per task instructions) ---
-
-/// Format the source description for a plugin dependency.
-fn format_plugin_source(dep: &PluginDependency) -> String {
-    if let Some(ref registry) = dep.registry {
-        let version = dep.version.as_deref().unwrap_or("*");
-        format!("{version} ({})", style(format!("registry: {registry}")).cyan())
-    } else if let Some(ref git) = dep.git {
-        let ref_str = dep
-            .tag
-            .as_ref()
-            .map(|t| format!("tag: {t}"))
-            .or_else(|| dep.branch.as_ref().map(|b| format!("branch: {b}")))
-            .or_else(|| {
-                dep.commit
-                    .as_ref()
-                    .map(|c| format!("commit: {}", &c[..8.min(c.len())]))
-            })
-            .unwrap_or_default();
-        let git_info = if ref_str.is_empty() {
-            format!("git: {git}")
-        } else {
-            format!("git: {git}, {ref_str}")
-        };
-        format!("({})", style(git_info).yellow())
-    } else {
-        "(unknown source)".to_string()
-    }
-}
-
-/// Format the source description for a skill dependency.
-fn format_skill_source(dep: &SkillDependency) -> String {
-    if dep.is_local() {
-        format!("local: {}", dep.path)
-    } else if let Some(ref git) = dep.git {
-        let ref_str = dep
-            .tag
-            .as_ref()
-            .map(|t| format!(", tag: {t}"))
-            .or_else(|| dep.branch.as_ref().map(|b| format!(", branch: {b}")))
-            .or_else(|| {
-                dep.commit
-                    .as_ref()
-                    .map(|c| format!(", commit: {}", &c[..8.min(c.len())]))
-            })
-            .unwrap_or_default();
-        format!("git: {git}{ref_str}")
-    } else {
-        format!("path: {}", dep.path)
-    }
-}
-
-/// Format the source description for an agent dependency.
-fn format_agent_source(dep: &AgentDependency) -> String {
-    let mut parts = Vec::new();
-    if dep.is_local() {
-        parts.push(format!("local: {}", dep.path));
-    } else if let Some(ref git) = dep.git {
-        let ref_str = dep
-            .tag
-            .as_ref()
-            .map(|t| format!(", tag: {t}"))
-            .or_else(|| dep.branch.as_ref().map(|b| format!(", branch: {b}")))
-            .or_else(|| {
-                dep.commit
-                    .as_ref()
-                    .map(|c| format!(", commit: {}", &c[..8.min(c.len())]))
-            })
-            .unwrap_or_default();
-        parts.push(format!("git: {git}{ref_str}"));
-    } else {
-        parts.push(format!("path: {}", dep.path));
-    }
-    if let Some(ref model) = dep.model {
-        parts.push(format!("model: {model}"));
-    }
-    parts.join(", ")
-}
-
-/// Format the source description for an MCP server.
-fn format_mcp_source(cfg: &McpServerConfig) -> String {
-    if let Some(ref url) = cfg.url {
-        format!("url: {url}")
-    } else if let Some(ref cmd) = cfg.command {
-        let args_str = if cfg.args.is_empty() {
-            String::new()
-        } else {
-            format!(" {}", cfg.args.join(" "))
-        };
-        format!("command: {cmd}{args_str}")
-    } else {
-        "(unconfigured)".to_string()
-    }
-}
-
 /// Render the dependency graph in Graphviz DOT format.
 fn print_dot(env: &AgentEnvironment) {
     let project_name = &env.name;
@@ -566,29 +473,7 @@ fn build_tree_string(env: &AgentEnvironment) -> String {
             "plugins" => {
                 let items: Vec<_> = env.plugins.iter().collect();
                 build_section_items_string(&mut out, &items, section_cont, |name, dep| {
-                    let source = if let Some(ref registry) = dep.registry {
-                        let version = dep.version.as_deref().unwrap_or("*");
-                        format!("{version} (registry: {registry})")
-                    } else if let Some(ref git) = dep.git {
-                        let ref_str = dep
-                            .tag
-                            .as_ref()
-                            .map(|t| format!("tag: {t}"))
-                            .or_else(|| dep.branch.as_ref().map(|b| format!("branch: {b}")))
-                            .or_else(|| {
-                                dep.commit
-                                    .as_ref()
-                                    .map(|c| format!("commit: {}", &c[..8.min(c.len())]))
-                            })
-                            .unwrap_or_default();
-                        if ref_str.is_empty() {
-                            format!("(git: {git})")
-                        } else {
-                            format!("(git: {git}, {ref_str})")
-                        }
-                    } else {
-                        "(unknown source)".to_string()
-                    };
+                    let source = format_plugin_source(dep);
                     let mut children = Vec::new();
                     if let Some(ref include) = dep.include {
                         for s in &include.skills {
@@ -604,70 +489,21 @@ fn build_tree_string(env: &AgentEnvironment) -> String {
             "skills" => {
                 let items: Vec<_> = env.skills.iter().collect();
                 build_section_items_string(&mut out, &items, section_cont, |name, dep| {
-                    let source = if dep.is_local() {
-                        format!("local: {}", dep.path)
-                    } else if let Some(ref git) = dep.git {
-                        let ref_str = dep
-                            .tag
-                            .as_ref()
-                            .map(|t| format!(", tag: {t}"))
-                            .or_else(|| dep.branch.as_ref().map(|b| format!(", branch: {b}")))
-                            .or_else(|| {
-                                dep.commit
-                                    .as_ref()
-                                    .map(|c| format!(", commit: {}", &c[..8.min(c.len())]))
-                            })
-                            .unwrap_or_default();
-                        format!("git: {git}{ref_str}")
-                    } else {
-                        format!("path: {}", dep.path)
-                    };
+                    let source = format_skill_source(dep);
                     (format!("{name} ({source})"), Vec::new())
                 });
             }
             "agents" => {
                 let items: Vec<_> = env.agents.iter().collect();
                 build_section_items_string(&mut out, &items, section_cont, |name, dep| {
-                    let mut parts = Vec::new();
-                    if dep.is_local() {
-                        parts.push(format!("local: {}", dep.path));
-                    } else if let Some(ref git) = dep.git {
-                        let ref_str = dep
-                            .tag
-                            .as_ref()
-                            .map(|t| format!(", tag: {t}"))
-                            .or_else(|| dep.branch.as_ref().map(|b| format!(", branch: {b}")))
-                            .or_else(|| {
-                                dep.commit
-                                    .as_ref()
-                                    .map(|c| format!(", commit: {}", &c[..8.min(c.len())]))
-                            })
-                            .unwrap_or_default();
-                        parts.push(format!("git: {git}{ref_str}"));
-                    } else {
-                        parts.push(format!("path: {}", dep.path));
-                    }
-                    if let Some(ref model) = dep.model {
-                        parts.push(format!("model: {model}"));
-                    }
-                    (format!("{name} ({})", parts.join(", ")), Vec::new())
+                    let source = format_agent_source(dep);
+                    (format!("{name} ({source})"), Vec::new())
                 });
             }
             "mcp-servers" => {
                 let items: Vec<_> = env.mcp_servers.iter().collect();
                 build_section_items_string(&mut out, &items, section_cont, |name, cfg| {
-                    let source = if let Some(ref url) = cfg.url {
-                        format!("url: {url}")
-                    } else if let Some(ref cmd) = cfg.command {
-                        let args_str = if cfg.args.is_empty() {
-                            String::new()
-                        } else {
-                            format!(" {}", cfg.args.join(" "))
-                        };
-                        format!("command: {cmd}{args_str}")
-                    } else {
-                        "(unconfigured)".to_string()
-                    };
+                    let source = format_mcp_source(cfg);
                     (format!("{name} ({source})"), Vec::new())
                 });
             }

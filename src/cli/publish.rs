@@ -31,7 +31,7 @@ pub fn run(args: PublishArgs) -> anyhow::Result<()> {
     validate_semver(&args.version)?;
 
     // Load manifest
-    let cwd = std::env::current_dir().context("failed to get current directory")?;
+    let cwd = std::env::current_dir().context("getting current directory")?;
     let manifest_path = config::find_manifest(&cwd).ok_or_else(|| {
         anyhow::anyhow!(
             "no {} found in current or parent directories",
@@ -39,7 +39,7 @@ pub fn run(args: PublishArgs) -> anyhow::Result<()> {
         )
     })?;
     let manifest = manifest::load(&manifest_path)
-        .context("failed to load agent-environment.yml — are you in an agx project?")?;
+        .context("loading agent-environment.yml — are you in an agx project?")?;
 
     // Validate manifest has description
     validate_manifest(&manifest)?;
@@ -63,7 +63,7 @@ pub fn run(args: PublishArgs) -> anyhow::Result<()> {
             .with_prompt(&prompt)
             .default(false)
             .interact()
-            .context("failed to read confirmation")?;
+            .context("reading confirmation")?;
         if !confirmed {
             println!("Aborted.");
             return Ok(());
@@ -71,13 +71,15 @@ pub fn run(args: PublishArgs) -> anyhow::Result<()> {
     }
 
     // Clone registry to temp dir
-    let temp_dir = tempfile::tempdir().context("failed to create temp directory")?;
+    let temp_dir = tempfile::tempdir().context("creating temp directory")?;
     let registry_dir = temp_dir.path().join("registry");
 
     let status = std::process::Command::new("git")
-        .args(["clone", &registry_url, registry_dir.to_str().unwrap()])
+        .arg("clone")
+        .arg(&registry_url)
+        .arg(&registry_dir)
         .status()
-        .context("failed to clone registry")?;
+        .context("cloning registry")?;
     if !status.success() {
         bail!("failed to clone registry at {}", registry_url);
     }
@@ -145,7 +147,7 @@ fn get_current_commit() -> anyhow::Result<String> {
     let output = std::process::Command::new("git")
         .args(["rev-parse", "HEAD"])
         .output()
-        .context("failed to run git rev-parse HEAD — is this a git repository?")?;
+        .context("running git rev-parse HEAD — is this a git repository?")?;
     if !output.status.success() {
         bail!("failed to get current commit — is this a git repository?");
     }
@@ -160,7 +162,7 @@ fn verify_clean_working_tree() -> anyhow::Result<()> {
     let output = std::process::Command::new("git")
         .args(["status", "--porcelain"])
         .output()
-        .context("failed to run git status")?;
+        .context("running git status")?;
     if !output.status.success() {
         bail!("failed to check working tree status");
     }
@@ -266,6 +268,11 @@ fn commit_and_push(registry_dir: &Path, name: &str, version: &str) -> anyhow::Re
 mod tests {
     use super::*;
 
+    /// Create a minimal test manifest via YAML parsing.
+    fn test_manifest() -> AgentEnvironment {
+        serde_yaml::from_str("name: test\nbackends:\n  claude-code: {}\n").unwrap()
+    }
+
     #[test]
     fn test_validate_semver_valid() {
         assert!(validate_semver("1.0.0").is_ok());
@@ -285,21 +292,7 @@ mod tests {
 
     #[test]
     fn test_validate_manifest_missing_description() {
-        let manifest = AgentEnvironment {
-            name: "test".to_string(),
-            version: None,
-            description: None,
-            backends: BTreeMap::new(),
-            registries: BTreeMap::new(),
-            plugins: BTreeMap::new(),
-            skills: BTreeMap::new(),
-            agents: BTreeMap::new(),
-            mcp_servers: BTreeMap::new(),
-            settings: BTreeMap::new(),
-            paths: None,
-            context: None,
-            hooks: None,
-        };
+        let manifest = test_manifest();
         let result = validate_manifest(&manifest);
         assert!(result.is_err());
         assert!(
@@ -312,62 +305,22 @@ mod tests {
 
     #[test]
     fn test_validate_manifest_empty_description() {
-        let manifest = AgentEnvironment {
-            name: "test".to_string(),
-            version: None,
-            description: Some("   ".to_string()),
-            backends: BTreeMap::new(),
-            registries: BTreeMap::new(),
-            plugins: BTreeMap::new(),
-            skills: BTreeMap::new(),
-            agents: BTreeMap::new(),
-            mcp_servers: BTreeMap::new(),
-            settings: BTreeMap::new(),
-            paths: None,
-            context: None,
-            hooks: None,
-        };
+        let mut manifest = test_manifest();
+        manifest.description = Some("   ".to_string());
         assert!(validate_manifest(&manifest).is_err());
     }
 
     #[test]
     fn test_validate_manifest_with_description() {
-        let manifest = AgentEnvironment {
-            name: "test".to_string(),
-            version: None,
-            description: Some("A test plugin".to_string()),
-            backends: BTreeMap::new(),
-            registries: BTreeMap::new(),
-            plugins: BTreeMap::new(),
-            skills: BTreeMap::new(),
-            agents: BTreeMap::new(),
-            mcp_servers: BTreeMap::new(),
-            settings: BTreeMap::new(),
-            paths: None,
-            context: None,
-            hooks: None,
-        };
+        let mut manifest = test_manifest();
+        manifest.description = Some("A test plugin".to_string());
         assert!(validate_manifest(&manifest).is_ok());
     }
 
     #[test]
     fn test_lookup_registry_found() {
         use agx::manifest::types::RegistryConfig;
-        let mut manifest = AgentEnvironment {
-            name: "test".to_string(),
-            version: None,
-            description: None,
-            backends: BTreeMap::new(),
-            registries: BTreeMap::new(),
-            plugins: BTreeMap::new(),
-            skills: BTreeMap::new(),
-            agents: BTreeMap::new(),
-            mcp_servers: BTreeMap::new(),
-            settings: BTreeMap::new(),
-            paths: None,
-            context: None,
-            hooks: None,
-        };
+        let mut manifest = test_manifest();
         manifest.registries.insert(
             "official".to_string(),
             RegistryConfig {
@@ -382,21 +335,7 @@ mod tests {
 
     #[test]
     fn test_lookup_registry_not_found() {
-        let manifest = AgentEnvironment {
-            name: "test".to_string(),
-            version: None,
-            description: None,
-            backends: BTreeMap::new(),
-            registries: BTreeMap::new(),
-            plugins: BTreeMap::new(),
-            skills: BTreeMap::new(),
-            agents: BTreeMap::new(),
-            mcp_servers: BTreeMap::new(),
-            settings: BTreeMap::new(),
-            paths: None,
-            context: None,
-            hooks: None,
-        };
+        let manifest = test_manifest();
         assert!(lookup_registry(&manifest, "nonexistent").is_err());
     }
 

@@ -113,7 +113,14 @@ fn fetch_assets(manifest: &AgentEnvironment, lockfile: &Lockfile) -> anyhow::Res
                 path,
             } => {
                 if cache::get_plugin(name, resolved_version)?.is_some() {
-                    continue; // Already cached
+                    // Already cached — still verify integrity
+                    if let Some(ref expected_hash) = entry.integrity {
+                        let cached_path = cache::get_plugin(name, resolved_version)?;
+                        if let Some(ref p) = cached_path {
+                            verify_cached_integrity(name, p, expected_hash)?;
+                        }
+                    }
+                    continue;
                 }
                 if let Some(ref commit) = entry.git_commit {
                     // Look up the registry URL from the manifest to find the bare repo
@@ -137,11 +144,23 @@ fn fetch_assets(manifest: &AgentEnvironment, lockfile: &Lockfile) -> anyhow::Res
                         &|src| cache::store_plugin(name, resolved_version, src),
                     )?;
                 }
+                // Verify integrity after fetching
+                if let Some(ref expected_hash) = entry.integrity {
+                    if let Some(ref p) = cache::get_plugin(name, resolved_version)? {
+                        verify_cached_integrity(name, p, expected_hash)?;
+                    }
+                }
             }
             LockedSource::Git { git: url, path } => {
                 if let Some(ref commit) = entry.git_commit {
                     // Use commit as version key for git plugins
                     if cache::get_plugin(name, commit)?.is_some() {
+                        // Already cached — still verify integrity
+                        if let Some(ref expected_hash) = entry.integrity {
+                            if let Some(ref p) = cache::get_plugin(name, commit)? {
+                                verify_cached_integrity(name, p, expected_hash)?;
+                            }
+                        }
                         continue;
                     }
                     eprintln!("fetching plugin '{name}'...");
@@ -152,6 +171,12 @@ fn fetch_assets(manifest: &AgentEnvironment, lockfile: &Lockfile) -> anyhow::Res
                         path.as_deref(),
                         &|src| cache::store_plugin(name, commit, src),
                     )?;
+                    // Verify integrity after fetching
+                    if let Some(ref expected_hash) = entry.integrity {
+                        if let Some(ref p) = cache::get_plugin(name, commit)? {
+                            verify_cached_integrity(name, p, expected_hash)?;
+                        }
+                    }
                 }
             }
             LockedSource::Npm { package, .. } => {
@@ -164,11 +189,6 @@ fn fetch_assets(manifest: &AgentEnvironment, lockfile: &Lockfile) -> anyhow::Res
             }
             LockedSource::Local { .. } => {} // Local assets are read at generate time
         }
-
-        // Verify integrity if present
-        if let Some(ref expected_hash) = entry.integrity {
-            verify_cached_integrity(name, expected_hash)?;
-        }
     }
 
     // Fetch skills
@@ -177,6 +197,12 @@ fn fetch_assets(manifest: &AgentEnvironment, lockfile: &Lockfile) -> anyhow::Res
             LockedSource::Git { git: url, path } => {
                 if let Some(ref commit) = entry.git_commit {
                     if cache::get_skill(name, commit)?.is_some() {
+                        // Already cached — still verify integrity
+                        if let Some(ref expected_hash) = entry.integrity {
+                            if let Some(ref p) = cache::get_skill(name, commit)? {
+                                verify_cached_integrity(name, p, expected_hash)?;
+                            }
+                        }
                         continue;
                     }
                     eprintln!("fetching skill '{name}'...");
@@ -187,14 +213,16 @@ fn fetch_assets(manifest: &AgentEnvironment, lockfile: &Lockfile) -> anyhow::Res
                         path.as_deref(),
                         &|src| cache::store_skill(name, commit, src),
                     )?;
+                    // Verify integrity after fetching
+                    if let Some(ref expected_hash) = entry.integrity {
+                        if let Some(ref p) = cache::get_skill(name, commit)? {
+                            verify_cached_integrity(name, p, expected_hash)?;
+                        }
+                    }
                 }
             }
             LockedSource::Local { .. } => {}
             _ => {}
-        }
-
-        if let Some(ref expected_hash) = entry.integrity {
-            verify_cached_integrity(name, expected_hash)?;
         }
     }
 
@@ -204,6 +232,12 @@ fn fetch_assets(manifest: &AgentEnvironment, lockfile: &Lockfile) -> anyhow::Res
             LockedSource::Git { git: url, path } => {
                 if let Some(ref commit) = entry.git_commit {
                     if cache::get_agent(name, commit)?.is_some() {
+                        // Already cached — still verify integrity
+                        if let Some(ref expected_hash) = entry.integrity {
+                            if let Some(ref p) = cache::get_agent(name, commit)? {
+                                verify_cached_integrity(name, p, expected_hash)?;
+                            }
+                        }
                         continue;
                     }
                     eprintln!("fetching agent '{name}'...");
@@ -214,14 +248,16 @@ fn fetch_assets(manifest: &AgentEnvironment, lockfile: &Lockfile) -> anyhow::Res
                         path.as_deref(),
                         &|src| cache::store_agent(name, commit, src),
                     )?;
+                    // Verify integrity after fetching
+                    if let Some(ref expected_hash) = entry.integrity {
+                        if let Some(ref p) = cache::get_agent(name, commit)? {
+                            verify_cached_integrity(name, p, expected_hash)?;
+                        }
+                    }
                 }
             }
             LockedSource::Local { .. } => {}
             _ => {}
-        }
-
-        if let Some(ref expected_hash) = entry.integrity {
-            verify_cached_integrity(name, expected_hash)?;
         }
     }
 
@@ -273,13 +309,22 @@ fn extract_from_git_cache(
     Ok(())
 }
 
-/// Verify integrity of a cached asset.
-fn verify_cached_integrity(name: &str, expected: &str) -> anyhow::Result<()> {
-    // Integrity verification is best-effort at this stage.
-    // Full implementation would look up the cached path and verify.
-    // For now, we log a note.
-    let _ = name;
-    let _ = expected;
+/// Verify integrity of a cached asset by computing a SHA-256 hash over its
+/// directory contents and comparing against the expected hash from the lockfile.
+///
+/// Returns an error if the computed hash does not match, indicating possible
+/// corruption or tampering.
+fn verify_cached_integrity(name: &str, cached_path: &Path, expected: &str) -> anyhow::Result<()> {
+    let actual = cache::integrity::hash_dir(cached_path)
+        .with_context(|| format!("computing integrity hash for '{name}'"))?;
+    if actual != expected {
+        anyhow::bail!(
+            "integrity check failed for '{}': expected {}, got {}",
+            name,
+            expected,
+            actual
+        );
+    }
     Ok(())
 }
 

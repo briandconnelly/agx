@@ -1,14 +1,11 @@
 //! `agx generate` — regenerate backend configs from existing lockfile and cache.
 
 use agx::backends::{get_backend, ResolvedEnvironment};
-use agx::config;
 use agx::context;
 use agx::hooks;
 use agx::lockfile::types::Lockfile;
-use agx::manifest::types::AgentEnvironment;
 use anyhow::{bail, Context};
 use clap::Args;
-use std::path::PathBuf;
 
 /// Arguments for `agx generate`.
 #[derive(Debug, Args)]
@@ -23,34 +20,16 @@ pub struct GenerateArgs {
 /// Loads the manifest and lockfile, then calls `generate()` on each backend
 /// declared in the manifest. Prints a summary of what was generated.
 pub fn run(args: GenerateArgs) -> anyhow::Result<()> {
-    let cwd = std::env::current_dir().context("getting current directory")?;
-
-    // Find and load manifest.
-    let manifest_path = config::find_manifest(&cwd)
-        .ok_or_else(|| anyhow::anyhow!("no {} found in {} or parent directories", config::MANIFEST_FILE, cwd.display()))?;
-    let project_root = manifest_path
-        .parent()
-        .expect("manifest must have a parent directory");
-
-    let manifest_content =
-        std::fs::read_to_string(&manifest_path).context("reading manifest file")?;
-    let manifest: AgentEnvironment =
-        serde_yaml::from_str(&manifest_content).context("parsing manifest")?;
-
-    // Load lockfile if it exists.
-    let lockfile_path = project_root.join(config::LOCKFILE_FILE);
-    let lockfile = if lockfile_path.exists() {
-        let content = std::fs::read_to_string(&lockfile_path).context("reading lockfile")?;
-        serde_yaml::from_str(&content).context("parsing lockfile")?
-    } else {
-        Lockfile::new()
-    };
+    let ctx = super::ProjectContext::load()?;
+    let manifest = &ctx.manifest;
+    let project_root = &ctx.project_root;
+    let lockfile = ctx.lockfile.unwrap_or_else(Lockfile::new);
 
     // Determine cache directory.
     let cache_dir = agx::cache::cache_dir()?;
 
     let resolved = ResolvedEnvironment {
-        manifest: &manifest,
+        manifest,
         lockfile: &lockfile,
         cache_dir: &cache_dir,
     };
@@ -74,7 +53,7 @@ pub fn run(args: GenerateArgs) -> anyhow::Result<()> {
     let pre_generate = hook_cfg.map(|h| h.pre_generate.as_slice()).unwrap_or_default();
     hooks::run_hooks("pre-generate", pre_generate)?;
 
-    let output_dir = PathBuf::from(project_root);
+    let output_dir = project_root;
 
     for name in &backend_names {
         let backend = get_backend(name).ok_or_else(|| {
@@ -89,7 +68,7 @@ pub fn run(args: GenerateArgs) -> anyhow::Result<()> {
     }
 
     // Generate context files (CLAUDE.md, GEMINI.md, AGENTS.md, etc.)
-    context::generate_context_files(&manifest, project_root)
+    context::generate_context_files(manifest, project_root)
         .context("generating context files")?;
 
     // Run post-generate hooks

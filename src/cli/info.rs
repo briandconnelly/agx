@@ -39,7 +39,7 @@ pub fn run(args: InfoArgs) -> Result<()> {
     let cwd = std::env::current_dir().context("getting current directory")?;
     let manifest_path = config::find_manifest(&cwd)
         .context("no agent-environment.yml found (run `agx init` first)")?;
-    let project_dir = manifest_path.parent().unwrap();
+    let project_dir = manifest_path.parent().expect("manifest must have a parent directory");
     let manifest = manifest::load(&manifest_path)?;
 
     // Try to load lockfile (optional — may not exist yet)

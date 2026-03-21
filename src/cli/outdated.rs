@@ -1,12 +1,9 @@
 //! `agx outdated` — list assets with newer versions available.
 
-use anyhow::Context;
 use clap::Args;
 use console::style;
 use std::collections::BTreeMap;
 
-use agx::config;
-use agx::lockfile;
 use agx::lockfile::types::{LockedSource, Lockfile};
 use agx::manifest::types::AgentEnvironment;
 use agx::resolver::semver_utils;
@@ -33,41 +30,25 @@ struct OutdatedEntry {
 /// exists within the manifest constraint ("wanted") or at all ("latest").
 /// Prints a table summarizing the results.
 pub fn run(_args: OutdatedArgs) -> anyhow::Result<()> {
-    let cwd = std::env::current_dir().context("getting current directory")?;
+    let ctx = super::ProjectContext::load()?;
+    let manifest = &ctx.manifest;
 
-    // Find and load manifest.
-    let manifest_path = config::find_manifest(&cwd).ok_or_else(|| {
-        anyhow::anyhow!(
-            "no {} found in {} or parent directories",
-            config::MANIFEST_FILE,
-            cwd.display()
-        )
-    })?;
-    let project_root = manifest_path
-        .parent()
-        .expect("manifest must have a parent directory");
-
-    let manifest_content =
-        std::fs::read_to_string(&manifest_path).context("reading manifest file")?;
-    let manifest: AgentEnvironment =
-        serde_yaml::from_str(&manifest_content).context("parsing manifest")?;
-
-    // Load lockfile.
-    let lockfile_path = project_root.join(config::LOCKFILE_FILE);
-    if !lockfile_path.exists() {
-        eprintln!(
-            "no lockfile found; run {} first",
-            style("agx install").cyan()
-        );
-        return Ok(());
-    }
-    let lockfile = lockfile::load(&lockfile_path)?;
+    let lockfile = match ctx.lockfile {
+        Some(lf) => lf,
+        None => {
+            eprintln!(
+                "no lockfile found; run {} first",
+                style("agx install").cyan()
+            );
+            return Ok(());
+        }
+    };
 
     // Fetch registry indexes.
-    let indexes = fetch_registry_indexes(&manifest)?;
+    let indexes = fetch_registry_indexes(manifest)?;
 
     // Check each registry plugin for updates.
-    let entries = find_outdated(&manifest, &lockfile, &indexes);
+    let entries = find_outdated(manifest, &lockfile, &indexes);
 
     if entries.is_empty() {
         eprintln!("{}", style("all packages are up to date").green());
@@ -217,7 +198,7 @@ fn print_table(entries: &[OutdatedEntry]) {
         .max(6);
 
     // Header.
-    eprintln!(
+    println!(
         "{:<name_w$}  {:<cur_w$}  {:<want_w$}  {:<lat_w$}",
         style("Package").bold(),
         style("Current").bold(),
@@ -242,7 +223,7 @@ fn print_table(entries: &[OutdatedEntry]) {
             style(&entry.latest).dim().to_string()
         };
 
-        eprintln!(
+        println!(
             "{:<name_w$}  {:<cur_w$}  {:<want_w$}  {:<lat_w$}",
             entry.name,
             entry.current,

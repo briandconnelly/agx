@@ -253,37 +253,65 @@ fn resolve_plugin(
     }
 }
 
+/// Shared helper for resolving a skill or agent dependency.
+///
+/// Both skill and agent dependencies follow the same pattern: they are either
+/// local (path-only) or git-sourced (git URL + path + ref). This function
+/// handles both cases and returns a `LockedEntry`.
+fn resolve_path_or_git_dep(
+    name: &str,
+    kind: &str,
+    is_local: bool,
+    path: &str,
+    git: Option<&str>,
+    tag: Option<&str>,
+    branch: Option<&str>,
+    commit: Option<&str>,
+    context: &ResolveContext,
+) -> Result<crate::lockfile::types::LockedEntry, ResolverError> {
+    if is_local {
+        Ok(crate::lockfile::types::LockedEntry {
+            source: LockedSource::Local {
+                local: path.to_string(),
+            },
+            git_commit: None,
+            integrity: None,
+        })
+    } else if let Some(git_url) = git {
+        let resolved_commit = resolve_git_ref(git_url, tag, branch, commit, context)?;
+        Ok(crate::lockfile::types::LockedEntry {
+            source: LockedSource::Git {
+                git: git_url.to_string(),
+                path: Some(path.to_string()),
+            },
+            git_commit: Some(resolved_commit),
+            integrity: None,
+        })
+    } else {
+        Err(ResolverError::InvalidSource {
+            name: name.to_string(),
+            reason: format!("{kind} must specify either a local path or git source"),
+        })
+    }
+}
+
 /// Resolve a single skill dependency to a locked entry.
 fn resolve_skill(
     name: &str,
     dep: &crate::manifest::types::SkillDependency,
     context: &ResolveContext,
 ) -> Result<LockedSkill, ResolverError> {
-    if dep.is_local() {
-        Ok(LockedSkill {
-            source: LockedSource::Local {
-                local: dep.path.clone(),
-            },
-            git_commit: None,
-            integrity: None,
-        })
-    } else if dep.git.is_some() {
-        let git_url = dep.git.as_deref().unwrap();
-        let commit = resolve_git_ref(git_url, dep.tag.as_deref(), dep.branch.as_deref(), dep.commit.as_deref(), context)?;
-        Ok(LockedSkill {
-            source: LockedSource::Git {
-                git: git_url.to_string(),
-                path: Some(dep.path.clone()),
-            },
-            git_commit: Some(commit),
-            integrity: None,
-        })
-    } else {
-        Err(ResolverError::InvalidSource {
-            name: name.to_string(),
-            reason: "skill must specify either a local path or git source".to_string(),
-        })
-    }
+    resolve_path_or_git_dep(
+        name,
+        "skill",
+        dep.is_local(),
+        &dep.path,
+        dep.git.as_deref(),
+        dep.tag.as_deref(),
+        dep.branch.as_deref(),
+        dep.commit.as_deref(),
+        context,
+    )
 }
 
 /// Resolve a single agent dependency to a locked entry.
@@ -292,31 +320,17 @@ fn resolve_agent(
     dep: &crate::manifest::types::AgentDependency,
     context: &ResolveContext,
 ) -> Result<LockedAgent, ResolverError> {
-    if dep.is_local() {
-        Ok(LockedAgent {
-            source: LockedSource::Local {
-                local: dep.path.clone(),
-            },
-            git_commit: None,
-            integrity: None,
-        })
-    } else if dep.git.is_some() {
-        let git_url = dep.git.as_deref().unwrap();
-        let commit = resolve_git_ref(git_url, dep.tag.as_deref(), dep.branch.as_deref(), dep.commit.as_deref(), context)?;
-        Ok(LockedAgent {
-            source: LockedSource::Git {
-                git: git_url.to_string(),
-                path: Some(dep.path.clone()),
-            },
-            git_commit: Some(commit),
-            integrity: None,
-        })
-    } else {
-        Err(ResolverError::InvalidSource {
-            name: name.to_string(),
-            reason: "agent must specify either a local path or git source".to_string(),
-        })
-    }
+    resolve_path_or_git_dep(
+        name,
+        "agent",
+        dep.is_local(),
+        &dep.path,
+        dep.git.as_deref(),
+        dep.tag.as_deref(),
+        dep.branch.as_deref(),
+        dep.commit.as_deref(),
+        context,
+    )
 }
 
 /// Resolve a git ref (tag, branch, or commit) to a commit SHA using the context.
@@ -374,7 +388,7 @@ fn resolve_git_ref_from_context(
 }
 
 /// Expand a git URL that might be a GitHub `owner/repo` shorthand.
-fn expand_source_url(url: &str) -> String {
+pub fn expand_source_url(url: &str) -> String {
     if !url.contains("://") && !url.contains('@') && url.matches('/').count() == 1 {
         format!("https://github.com/{}.git", url)
     } else {

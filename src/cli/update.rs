@@ -9,10 +9,9 @@ use std::path::PathBuf;
 use agx::backends::{get_backend, ResolvedEnvironment};
 use agx::config;
 use agx::lockfile;
-use agx::lockfile::types::{LockedSource, Lockfile};
+use agx::lockfile::types::{LockedEntry, LockedSource, Lockfile};
 use agx::manifest::types::AgentEnvironment;
-use agx::resolver::{self, PluginVersionInfo, ResolveContext};
-use agx::sources::registry;
+use agx::resolver;
 
 #[derive(Debug, Args)]
 pub struct UpdateArgs {
@@ -53,7 +52,7 @@ pub fn run(args: UpdateArgs) -> anyhow::Result<()> {
     };
 
     // Build resolve context from registries and git refs.
-    let context = build_resolve_context(&manifest)?;
+    let context = super::lock::build_resolve_context(&manifest)?;
 
     // Resolve.
     let new_lockfile = if let Some(ref name) = args.name {
@@ -103,107 +102,6 @@ pub fn run(args: UpdateArgs) -> anyhow::Result<()> {
     print_diff(&old_lockfile, &new_lockfile);
 
     Ok(())
-}
-
-/// Build a [`ResolveContext`] by fetching registry indexes and resolving git refs.
-fn build_resolve_context(manifest: &AgentEnvironment) -> anyhow::Result<ResolveContext> {
-    let mut registry_versions: BTreeMap<String, BTreeMap<String, Vec<PluginVersionInfo>>> =
-        BTreeMap::new();
-    let mut git_commits: BTreeMap<String, String> = BTreeMap::new();
-
-    // Fetch registry indexes.
-    for (reg_name, reg_config) in &manifest.registries {
-        let cache_dir = agx::cache::registry_dir()?.join(reg_name);
-        match registry::fetch_index(&reg_config.url, &cache_dir) {
-            Ok(index) => {
-                let mut plugin_map = BTreeMap::new();
-                for (plugin_name, entry) in &index.plugins {
-                    let versions: Vec<PluginVersionInfo> = entry
-                        .versions
-                        .iter()
-                        .filter_map(|(ver_str, detail)| {
-                            let version = semver::Version::parse(ver_str).ok()?;
-                            Some(PluginVersionInfo {
-                                version,
-                                git_commit: detail.commit.clone(),
-                                path: detail.path.clone(),
-                                source_kind: detail.source_kind.clone(),
-                            })
-                        })
-                        .collect();
-                    plugin_map.insert(plugin_name.clone(), versions);
-                }
-                registry_versions.insert(reg_name.clone(), plugin_map);
-            }
-            Err(e) => {
-                eprintln!(
-                    "{} could not fetch registry '{}': {}",
-                    style("warning:").yellow().bold(),
-                    reg_name,
-                    e
-                );
-            }
-        }
-    }
-
-    // Resolve git refs for plugins, skills, and agents.
-    for dep in manifest.plugins.values() {
-        if let Some(ref url) = dep.git {
-            resolve_git_ref_to_context(url, dep.tag.as_deref(), dep.branch.as_deref(), &mut git_commits);
-        }
-    }
-    for dep in manifest.skills.values() {
-        if let Some(ref url) = dep.git {
-            resolve_git_ref_to_context(url, dep.tag.as_deref(), dep.branch.as_deref(), &mut git_commits);
-        }
-    }
-    for dep in manifest.agents.values() {
-        if let Some(ref url) = dep.git {
-            resolve_git_ref_to_context(url, dep.tag.as_deref(), dep.branch.as_deref(), &mut git_commits);
-        }
-    }
-
-    Ok(ResolveContext {
-        registry_versions,
-        git_commits,
-    })
-}
-
-/// Resolve a git URL + ref to a commit SHA using `git ls-remote`.
-fn resolve_git_ref_to_context(
-    url: &str,
-    tag: Option<&str>,
-    branch: Option<&str>,
-    git_commits: &mut BTreeMap<String, String>,
-) {
-    let ref_str = tag.or(branch).unwrap_or("HEAD");
-    let lookup_key = format!("{}#{}", url, ref_str);
-
-    if git_commits.contains_key(&lookup_key) {
-        return;
-    }
-
-    // Use git ls-remote to resolve the ref.
-    let ls_ref = if ref_str == "HEAD" {
-        "HEAD".to_string()
-    } else if tag.is_some() {
-        format!("refs/tags/{}", ref_str)
-    } else {
-        format!("refs/heads/{}", ref_str)
-    };
-
-    let output = std::process::Command::new("git")
-        .args(["ls-remote", url, &ls_ref])
-        .output();
-
-    if let Ok(output) = output {
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            if let Some(sha) = stdout.split_whitespace().next() {
-                git_commits.insert(lookup_key, sha.to_string());
-            }
-        }
-    }
 }
 
 /// Print a human-readable diff of what changed between two lockfiles.
@@ -280,7 +178,7 @@ trait HasVersion {
     fn version_display(&self) -> String;
 }
 
-impl HasVersion for agx::lockfile::types::LockedPlugin {
+impl HasVersion for LockedEntry {
     fn version_display(&self) -> String {
         match &self.source {
             LockedSource::Registry {
@@ -291,56 +189,13 @@ impl HasVersion for agx::lockfile::types::LockedPlugin {
                 .as_deref()
                 .map(|c| format!("{}#{}", git, &c[..7.min(c.len())]))
                 .unwrap_or_else(|| git.clone()),
-            LockedSource::Npm { package, resolved_version, .. } => {
-                resolved_version.as_deref().map_or_else(
-                    || package.clone(),
-                    |v| format!("{package}@{v}"),
-                )
-            }
-            LockedSource::Local { local } => local.clone(),
-        }
-    }
-}
-
-impl HasVersion for agx::lockfile::types::LockedSkill {
-    fn version_display(&self) -> String {
-        match &self.source {
-            LockedSource::Registry {
-                resolved_version, ..
-            } => resolved_version.clone(),
-            LockedSource::Git { git, .. } => self
-                .git_commit
+            LockedSource::Npm {
+                package,
+                resolved_version,
+                ..
+            } => resolved_version
                 .as_deref()
-                .map(|c| format!("{}#{}", git, &c[..7.min(c.len())]))
-                .unwrap_or_else(|| git.clone()),
-            LockedSource::Npm { package, resolved_version, .. } => {
-                resolved_version.as_deref().map_or_else(
-                    || package.clone(),
-                    |v| format!("{package}@{v}"),
-                )
-            }
-            LockedSource::Local { local } => local.clone(),
-        }
-    }
-}
-
-impl HasVersion for agx::lockfile::types::LockedAgent {
-    fn version_display(&self) -> String {
-        match &self.source {
-            LockedSource::Registry {
-                resolved_version, ..
-            } => resolved_version.clone(),
-            LockedSource::Git { git, .. } => self
-                .git_commit
-                .as_deref()
-                .map(|c| format!("{}#{}", git, &c[..7.min(c.len())]))
-                .unwrap_or_else(|| git.clone()),
-            LockedSource::Npm { package, resolved_version, .. } => {
-                resolved_version.as_deref().map_or_else(
-                    || package.clone(),
-                    |v| format!("{package}@{v}"),
-                )
-            }
+                .map_or_else(|| package.clone(), |v| format!("{package}@{v}")),
             LockedSource::Local { local } => local.clone(),
         }
     }

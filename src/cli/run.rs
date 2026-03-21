@@ -33,24 +33,10 @@ pub struct RunArgs {
 /// the appropriate backend, builds the launch command with any runtime
 /// overrides, and execs the backend process.
 pub fn run(args: RunArgs) -> anyhow::Result<()> {
-    let cwd = std::env::current_dir().context("getting current directory")?;
-
-    // 1. Find manifest.
-    let manifest_path = config::find_manifest(&cwd).ok_or_else(|| {
-        anyhow::anyhow!(
-            "no {} found in {} or parent directories",
-            config::MANIFEST_FILE,
-            cwd.display()
-        )
-    })?;
-    let project_root = manifest_path
-        .parent()
-        .expect("manifest must have a parent directory");
-
-    let manifest_content =
-        std::fs::read_to_string(&manifest_path).context("reading manifest file")?;
-    let manifest: AgentEnvironment =
-        serde_yaml::from_str(&manifest_content).context("parsing manifest")?;
+    let ctx = super::ProjectContext::load()?;
+    let manifest = &ctx.manifest;
+    let manifest_path = &ctx.manifest_path;
+    let project_root = &ctx.project_root;
 
     // 2. Staleness detection.
     let lockfile_path = project_root.join(config::LOCKFILE_FILE);
@@ -61,7 +47,7 @@ pub fn run(args: RunArgs) -> anyhow::Result<()> {
             style("agx install").cyan(),
         );
     } else {
-        let stale = check_staleness(&manifest_path, &lockfile_path, &manifest)?;
+        let stale = check_staleness(manifest_path, &lockfile_path, manifest)?;
         if stale {
             eprintln!(
                 "{} environment may be out of date; run {} to update",
@@ -72,7 +58,7 @@ pub fn run(args: RunArgs) -> anyhow::Result<()> {
     }
 
     // 3. Determine backend.
-    let backend_name = determine_backend(&args.backend, &manifest)?;
+    let backend_name = determine_backend(&args.backend, manifest)?;
 
     // 4. Look up backend implementation.
     let backend = get_backend(&backend_name).ok_or_else(|| {

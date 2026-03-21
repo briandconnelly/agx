@@ -66,7 +66,7 @@ pub fn run_lock(
 }
 
 /// Build a [`ResolveContext`] by fetching registry indexes and resolving git refs.
-fn build_resolve_context(
+pub fn build_resolve_context(
     manifest: &agx::manifest::types::AgentEnvironment,
 ) -> anyhow::Result<ResolveContext> {
     let mut registry_versions: BTreeMap<String, BTreeMap<String, Vec<PluginVersionInfo>>> =
@@ -236,7 +236,7 @@ fn build_resolve_context(
 }
 
 /// Expand a git URL that might be a GitHub `owner/repo` shorthand.
-fn expand_git_url(url: &str) -> String {
+pub fn expand_git_url(url: &str) -> String {
     // If it looks like a shorthand (no protocol, no dots before /), expand to https
     if !url.contains("://") && !url.contains('@') && url.matches('/').count() == 1 {
         format!("https://github.com/{}.git", url)

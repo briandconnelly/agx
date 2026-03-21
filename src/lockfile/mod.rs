@@ -57,31 +57,16 @@ pub fn is_stale(lockfile: &Lockfile, manifest: &AgentEnvironment) -> bool {
     }
 
     // Check for manifest skills not in lockfile
-    for (name, skill) in &manifest.skills {
-        // Local skills are always read from disk, so they don't need lockfile entries.
-        // But if they're in the manifest and not in the lockfile, it's still stale
-        // because the lockfile should track them (even with just a local source).
+    for name in manifest.skills.keys() {
         if !lockfile.skills.contains_key(name) {
-            // Git-sourced skills must be in the lockfile
-            if skill.git.is_some() {
-                return true;
-            }
-            // For local skills, we also track them for completeness
-            if !lockfile.skills.contains_key(name) {
-                return true;
-            }
+            return true;
         }
     }
 
     // Check for manifest agents not in lockfile
-    for (name, agent) in &manifest.agents {
+    for name in manifest.agents.keys() {
         if !lockfile.agents.contains_key(name) {
-            if agent.git.is_some() {
-                return true;
-            }
-            if !lockfile.agents.contains_key(name) {
-                return true;
-            }
+            return true;
         }
     }
 

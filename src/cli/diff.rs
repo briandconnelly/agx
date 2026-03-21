@@ -1,10 +1,8 @@
 //! `agx diff` — show what would change if `agx generate` were run now.
 
 use agx::backends::{get_backend, ResolvedEnvironment, GENERATED_MARKER};
-use agx::config;
 use agx::context;
 use agx::lockfile::types::Lockfile;
-use agx::manifest::types::AgentEnvironment;
 use anyhow::{bail, Context};
 use clap::Args;
 use console::style;
@@ -42,39 +40,16 @@ impl DiffSummary {
 /// them against the actual project files. Prints a summary of differences and
 /// exits with code 1 if any differences are found.
 pub fn run(args: DiffArgs) -> anyhow::Result<()> {
-    let cwd = std::env::current_dir().context("getting current directory")?;
-
-    // Find and load manifest.
-    let manifest_path = config::find_manifest(&cwd).ok_or_else(|| {
-        anyhow::anyhow!(
-            "no {} found in {} or parent directories",
-            config::MANIFEST_FILE,
-            cwd.display()
-        )
-    })?;
-    let project_root = manifest_path
-        .parent()
-        .expect("manifest must have a parent directory");
-
-    let manifest_content =
-        std::fs::read_to_string(&manifest_path).context("reading manifest file")?;
-    let manifest: AgentEnvironment =
-        serde_yaml::from_str(&manifest_content).context("parsing manifest")?;
-
-    // Load lockfile if it exists.
-    let lockfile_path = project_root.join(config::LOCKFILE_FILE);
-    let lockfile = if lockfile_path.exists() {
-        let content = std::fs::read_to_string(&lockfile_path).context("reading lockfile")?;
-        serde_yaml::from_str(&content).context("parsing lockfile")?
-    } else {
-        Lockfile::new()
-    };
+    let ctx = super::ProjectContext::load()?;
+    let manifest = &ctx.manifest;
+    let project_root = &ctx.project_root;
+    let lockfile = ctx.lockfile.unwrap_or_else(Lockfile::new);
 
     // Determine cache directory.
     let cache_dir = agx::cache::cache_dir()?;
 
     let resolved = ResolvedEnvironment {
-        manifest: &manifest,
+        manifest,
         lockfile: &lockfile,
         cache_dir: &cache_dir,
     };
@@ -111,11 +86,11 @@ pub fn run(args: DiffArgs) -> anyhow::Result<()> {
     }
 
     // Generate context files to tempdir.
-    context::generate_context_files(&manifest, temp_path)
+    context::generate_context_files(manifest, temp_path)
         .context("generating context files to tempdir")?;
 
     // Compare tempdir against project root.
-    let summary = compare_trees(temp_path, &PathBuf::from(project_root))?;
+    let summary = compare_trees(temp_path, project_root)?;
 
     // Print results.
     if !summary.has_changes() {

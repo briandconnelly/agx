@@ -26,25 +26,7 @@ fn fixture_dir() -> std::path::PathBuf {
 /// Copy the full-local-project fixture into a tempdir for isolated testing.
 fn setup_project(dir: &Path) {
     let src = fixture_dir();
-    copy_dir_recursive(&src, dir);
-}
-
-/// Recursively copy a directory tree.
-fn copy_dir_recursive(src: &Path, dst: &Path) {
-    for entry in walkdir::WalkDir::new(src).min_depth(1) {
-        let entry = entry.unwrap();
-        let relative = entry.path().strip_prefix(src).unwrap();
-        let target = dst.join(relative);
-
-        if entry.file_type().is_dir() {
-            fs::create_dir_all(&target).unwrap();
-        } else {
-            if let Some(parent) = target.parent() {
-                fs::create_dir_all(parent).unwrap();
-            }
-            fs::copy(entry.path(), &target).unwrap();
-        }
-    }
+    agx::backends::copy_dir_recursive(&src, dir).unwrap();
 }
 
 /// Build a ResolveContext for a manifest with only local dependencies.

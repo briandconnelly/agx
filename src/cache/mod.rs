@@ -67,7 +67,7 @@ pub fn registry_dir() -> Result<PathBuf> {
 /// Copies the contents of `source_dir` into `$CACHE/plugins/{name}/{version}/`.
 pub fn store_plugin(name: &str, version: &str, source_dir: &Path) -> Result<PathBuf> {
     let dest = plugins_dir()?.join(name).join(version);
-    copy_dir_to(source_dir, &dest)
+    crate::backends::copy_dir_recursive(source_dir, &dest)
         .with_context(|| format!("caching plugin {name}@{version}"))?;
     Ok(dest)
 }
@@ -77,7 +77,7 @@ pub fn store_plugin(name: &str, version: &str, source_dir: &Path) -> Result<Path
 /// Copies the contents of `source_dir` into `$CACHE/skills/{name}/{commit}/`.
 pub fn store_skill(name: &str, commit: &str, source_dir: &Path) -> Result<PathBuf> {
     let dest = skills_dir()?.join(name).join(commit);
-    copy_dir_to(source_dir, &dest)
+    crate::backends::copy_dir_recursive(source_dir, &dest)
         .with_context(|| format!("caching skill {name}@{commit}"))?;
     Ok(dest)
 }
@@ -251,32 +251,6 @@ pub fn format_size(bytes: u64) -> String {
     } else {
         format!("{bytes} B")
     }
-}
-
-/// Recursively copy a directory tree from `src` to `dest`.
-fn copy_dir_to(src: &Path, dest: &Path) -> Result<()> {
-    if dest.exists() {
-        std::fs::remove_dir_all(dest)
-            .with_context(|| format!("clearing existing cache at {}", dest.display()))?;
-    }
-    std::fs::create_dir_all(dest)
-        .with_context(|| format!("creating {}", dest.display()))?;
-
-    for entry in walkdir::WalkDir::new(src) {
-        let entry = entry?;
-        let relative = entry.path().strip_prefix(src)?;
-        let target = dest.join(relative);
-
-        if entry.file_type().is_dir() {
-            std::fs::create_dir_all(&target)?;
-        } else {
-            if let Some(parent) = target.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            std::fs::copy(entry.path(), &target)?;
-        }
-    }
-    Ok(())
 }
 
 fn dir_size(path: &Path) -> Result<u64> {
