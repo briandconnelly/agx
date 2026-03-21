@@ -21,16 +21,33 @@ pub struct GenerateArgs {
 /// declared in the manifest. Prints a summary of what was generated.
 pub fn run(args: GenerateArgs) -> anyhow::Result<()> {
     let ctx = super::ProjectContext::load()?;
+    run_with_context(args, &ctx)
+}
+
+/// Inner implementation that takes a pre-loaded project context,
+/// separated from `run` so it can be tested without relying on the
+/// process working directory.
+pub fn run_with_context(
+    args: GenerateArgs,
+    ctx: &super::ProjectContext,
+) -> anyhow::Result<()> {
     let manifest = &ctx.manifest;
     let project_root = &ctx.project_root;
-    let lockfile = ctx.lockfile.unwrap_or_else(Lockfile::new);
+    let lockfile_owned;
+    let lockfile = match &ctx.lockfile {
+        Some(lf) => lf,
+        None => {
+            lockfile_owned = Lockfile::new();
+            &lockfile_owned
+        }
+    };
 
     // Determine cache directory.
     let cache_dir = agx::cache::cache_dir()?;
 
     let resolved = ResolvedEnvironment {
         manifest,
-        lockfile: &lockfile,
+        lockfile,
         cache_dir: &cache_dir,
     };
 
@@ -80,4 +97,158 @@ pub fn run(args: GenerateArgs) -> anyhow::Result<()> {
         backend_names.len()
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agx::manifest::types::*;
+    use std::collections::BTreeMap;
+
+    fn with_temp_cache(f: impl FnOnce()) {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("AGX_CACHE_DIR", tmp.path()) };
+        f();
+        unsafe { std::env::remove_var("AGX_CACHE_DIR") };
+    }
+
+    fn write_manifest(dir: &std::path::Path, yaml: &str) {
+        std::fs::write(dir.join("agent-environment.yml"), yaml).unwrap();
+    }
+
+    #[test]
+    fn run_with_valid_project() {
+        with_temp_cache(|| {
+            let tmp = tempfile::tempdir().unwrap();
+            write_manifest(
+                tmp.path(),
+                "name: test\nbackends:\n  claude-code:\n    isolation: strict\n",
+            );
+
+            let ctx = super::super::ProjectContext::load_from(tmp.path()).unwrap();
+            let args = GenerateArgs { backend: None };
+            let result = run_with_context(args, &ctx);
+            assert!(result.is_ok());
+        });
+    }
+
+    #[test]
+    fn run_with_specific_backend() {
+        with_temp_cache(|| {
+            let tmp = tempfile::tempdir().unwrap();
+            write_manifest(
+                tmp.path(),
+                "name: test\nbackends:\n  claude-code:\n    isolation: strict\n  gemini-cli: {}\n",
+            );
+
+            let ctx = super::super::ProjectContext::load_from(tmp.path()).unwrap();
+            let args = GenerateArgs {
+                backend: Some("claude-code".to_string()),
+            };
+            let result = run_with_context(args, &ctx);
+            assert!(result.is_ok());
+        });
+    }
+
+    #[test]
+    fn run_with_unknown_backend_filter_errors() {
+        with_temp_cache(|| {
+            let tmp = tempfile::tempdir().unwrap();
+            write_manifest(
+                tmp.path(),
+                "name: test\nbackends:\n  claude-code: {}\n",
+            );
+
+            let ctx = super::super::ProjectContext::load_from(tmp.path()).unwrap();
+            let args = GenerateArgs {
+                backend: Some("nonexistent".to_string()),
+            };
+            let result = run_with_context(args, &ctx);
+            assert!(result.is_err());
+            let msg = result.unwrap_err().to_string();
+            assert!(
+                msg.contains("nonexistent"),
+                "expected error mentioning 'nonexistent', got: {msg}"
+            );
+            assert!(
+                msg.contains("not declared"),
+                "expected 'not declared' error, got: {msg}"
+            );
+        });
+    }
+
+    #[test]
+    fn run_no_manifest_errors() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = super::super::ProjectContext::load_from(tmp.path());
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("no agent-environment.yml found"));
+    }
+
+    #[test]
+    fn run_with_multiple_backends() {
+        with_temp_cache(|| {
+            let tmp = tempfile::tempdir().unwrap();
+            write_manifest(
+                tmp.path(),
+                "name: test\nbackends:\n  claude-code: {}\n  gemini-cli: {}\n",
+            );
+
+            let ctx = super::super::ProjectContext::load_from(tmp.path()).unwrap();
+            let args = GenerateArgs { backend: None };
+            let result = run_with_context(args, &ctx);
+            assert!(result.is_ok());
+        });
+    }
+
+    #[test]
+    fn run_with_no_context_section() {
+        with_temp_cache(|| {
+            let tmp = tempfile::tempdir().unwrap();
+            write_manifest(
+                tmp.path(),
+                "name: test\nbackends:\n  claude-code: {}\n",
+            );
+
+            let ctx = super::super::ProjectContext::load_from(tmp.path()).unwrap();
+            assert!(ctx.manifest.context.is_none());
+            let args = GenerateArgs { backend: None };
+            let result = run_with_context(args, &ctx);
+            assert!(result.is_ok());
+        });
+    }
+
+    #[test]
+    fn run_with_mcp_servers_and_skills() {
+        with_temp_cache(|| {
+            let tmp = tempfile::tempdir().unwrap();
+            write_manifest(
+                tmp.path(),
+                r#"name: test
+backends:
+  claude-code: {}
+skills:
+  deploy:
+    path: ./skills/deploy
+mcp-servers:
+  playwright:
+    url: https://mcp.playwright.dev/sse
+"#,
+            );
+
+            // Create the local skill directory so the backend can copy it
+            let skill_dir = tmp.path().join("skills/deploy");
+            std::fs::create_dir_all(&skill_dir).unwrap();
+            std::fs::write(skill_dir.join("SKILL.md"), "# Deploy skill").unwrap();
+
+            let ctx = super::super::ProjectContext::load_from(tmp.path()).unwrap();
+            let args = GenerateArgs { backend: None };
+            let result = run_with_context(args, &ctx);
+            assert!(result.is_ok());
+        });
+    }
 }

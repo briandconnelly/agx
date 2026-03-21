@@ -327,10 +327,6 @@ mod tests {
     use super::*;
     use agx::manifest::types::*;
     use std::collections::BTreeMap;
-    use std::sync::Mutex;
-
-    /// Global lock for tests that modify env vars.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn make_manifest(registries: BTreeMap<String, RegistryConfig>) -> AgentEnvironment {
         AgentEnvironment {
@@ -433,7 +429,7 @@ mod tests {
 
     #[test]
     fn resolve_url_with_token() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // Safety: holding ENV_LOCK
         unsafe { std::env::set_var("AGX_REGISTRY_MY_REG_TOKEN", "ghp_abc123") };
 
@@ -446,7 +442,7 @@ mod tests {
 
     #[test]
     fn resolve_url_missing_token_errors() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // Ensure the var is not set
         unsafe { std::env::remove_var("AGX_REGISTRY_MISSING_TOKEN") };
 
@@ -465,5 +461,500 @@ mod tests {
             "my-private-reg".to_uppercase().replace('-', "_")
         );
         assert_eq!(env_var, "AGX_REGISTRY_MY_PRIVATE_REG_TOKEN");
+    }
+
+    // --- resolve_registry_url edge cases ---
+
+    /// Non-token auth type should pass URL through unchanged.
+    #[test]
+    fn resolve_url_non_token_auth() {
+        let url =
+            resolve_registry_url("test", "https://github.com/org/repo", Some("oauth")).unwrap();
+        assert_eq!(url, "https://github.com/org/repo");
+    }
+
+    /// HTTP URL (not HTTPS) with token auth should embed token.
+    #[test]
+    fn resolve_url_http_with_token() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe { std::env::set_var("AGX_REGISTRY_HTTP_REG_TOKEN", "tok_xyz") };
+
+        let url = resolve_registry_url(
+            "http-reg",
+            "http://internal.example.com/registry",
+            Some("token"),
+        )
+        .unwrap();
+        assert_eq!(url, "http://tok_xyz@internal.example.com/registry");
+
+        unsafe { std::env::remove_var("AGX_REGISTRY_HTTP_REG_TOKEN") };
+    }
+
+    /// SSH URL with token auth should pass through with a warning (can't embed token).
+    #[test]
+    fn resolve_url_ssh_with_token_passthrough() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe { std::env::set_var("AGX_REGISTRY_SSH_REG_TOKEN", "tok_ssh") };
+
+        let url = resolve_registry_url(
+            "ssh-reg",
+            "git@github.com:org/repo.git",
+            Some("token"),
+        )
+        .unwrap();
+        // SSH URLs can't embed tokens, so it passes through
+        assert_eq!(url, "git@github.com:org/repo.git");
+
+        unsafe { std::env::remove_var("AGX_REGISTRY_SSH_REG_TOKEN") };
+    }
+
+    /// Token with special characters should be embedded correctly.
+    #[test]
+    fn resolve_url_token_with_special_chars() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe { std::env::set_var("AGX_REGISTRY_SPECIAL_TOKEN", "ghp_abc/123+def") };
+
+        let url = resolve_registry_url(
+            "special",
+            "https://github.com/org/repo",
+            Some("token"),
+        )
+        .unwrap();
+        assert_eq!(url, "https://ghp_abc/123+def@github.com/org/repo");
+
+        unsafe { std::env::remove_var("AGX_REGISTRY_SPECIAL_TOKEN") };
+    }
+
+    // --- run_add / run_remove / run_list via manifest file ---
+
+    /// Helper: write a manifest to a tempdir and return the path to it.
+    fn write_manifest_to(dir: &std::path::Path, manifest: &AgentEnvironment) {
+        let path = dir.join(config::MANIFEST_FILE);
+        manifest::save(manifest, &path).unwrap();
+    }
+
+    /// Test `run_add` adds a registry to the manifest file.
+    #[test]
+    fn run_add_creates_registry_entry() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let manifest = make_manifest(BTreeMap::new());
+        write_manifest_to(tmp.path(), &manifest);
+
+        // run_add uses current_dir(), so we need to set it
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let result = run_add("my-reg", "https://github.com/org/registry.git", None);
+        std::env::set_current_dir(&original_dir).unwrap();
+
+        result.unwrap();
+
+        // Verify the manifest was updated
+        let loaded = manifest::load(&tmp.path().join(config::MANIFEST_FILE)).unwrap();
+        assert_eq!(loaded.registries.len(), 1);
+        assert_eq!(
+            loaded.registries["my-reg"].url,
+            "https://github.com/org/registry.git"
+        );
+        assert!(loaded.registries["my-reg"].auth.is_none());
+    }
+
+    /// Test `run_add` with auth parameter.
+    #[test]
+    fn run_add_with_auth() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let manifest = make_manifest(BTreeMap::new());
+        write_manifest_to(tmp.path(), &manifest);
+
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let result = run_add(
+            "private-reg",
+            "https://github.com/org/private-registry.git",
+            Some("token"),
+        );
+        std::env::set_current_dir(&original_dir).unwrap();
+
+        result.unwrap();
+
+        let loaded = manifest::load(&tmp.path().join(config::MANIFEST_FILE)).unwrap();
+        assert_eq!(loaded.registries["private-reg"].auth.as_deref(), Some("token"));
+    }
+
+    /// Test `run_add` with duplicate registry name errors.
+    #[test]
+    fn run_add_duplicate_errors() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let mut registries = BTreeMap::new();
+        registries.insert(
+            "existing".to_string(),
+            RegistryConfig {
+                url: "https://example.com/reg.git".to_string(),
+                auth: None,
+                pin: None,
+            },
+        );
+        let manifest = make_manifest(registries);
+        write_manifest_to(tmp.path(), &manifest);
+
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let result = run_add("existing", "https://other.com/reg.git", None);
+        std::env::set_current_dir(&original_dir).unwrap();
+
+        assert!(result.is_err());
+        let err = format!("{:#}", result.unwrap_err());
+        assert!(err.contains("already exists"));
+    }
+
+    /// Test `run_remove` removes a registry from the manifest file.
+    #[test]
+    fn run_remove_existing_registry() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let mut registries = BTreeMap::new();
+        registries.insert(
+            "to-remove".to_string(),
+            RegistryConfig {
+                url: "https://example.com/reg.git".to_string(),
+                auth: None,
+                pin: None,
+            },
+        );
+        let manifest = make_manifest(registries);
+        write_manifest_to(tmp.path(), &manifest);
+
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let result = run_remove("to-remove");
+        std::env::set_current_dir(&original_dir).unwrap();
+
+        result.unwrap();
+
+        let loaded = manifest::load(&tmp.path().join(config::MANIFEST_FILE)).unwrap();
+        assert!(loaded.registries.is_empty());
+    }
+
+    /// Test `run_remove` with nonexistent registry errors.
+    #[test]
+    fn run_remove_nonexistent_errors() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let manifest = make_manifest(BTreeMap::new());
+        write_manifest_to(tmp.path(), &manifest);
+
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let result = run_remove("nonexistent");
+        std::env::set_current_dir(&original_dir).unwrap();
+
+        assert!(result.is_err());
+        let err = format!("{:#}", result.unwrap_err());
+        assert!(err.contains("not found"));
+    }
+
+    /// Test `run_remove` warns when plugins reference the removed registry.
+    #[test]
+    fn run_remove_warns_referencing_plugins() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let mut registries = BTreeMap::new();
+        registries.insert(
+            "official".to_string(),
+            RegistryConfig {
+                url: "https://example.com/reg.git".to_string(),
+                auth: None,
+                pin: None,
+            },
+        );
+        let mut manifest = make_manifest(registries);
+        manifest.plugins.insert(
+            "some-plugin".to_string(),
+            PluginDependency {
+                registry: Some("official".to_string()),
+                version: Some(">=1.0.0".to_string()),
+                git: None,
+                tag: None,
+                branch: None,
+                commit: None,
+                include: None,
+                exclude: None,
+            },
+        );
+        write_manifest_to(tmp.path(), &manifest);
+
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        // Should succeed but print a warning (we can't easily capture stderr in a unit test,
+        // but the function should still complete successfully)
+        let result = run_remove("official");
+        std::env::set_current_dir(&original_dir).unwrap();
+
+        result.unwrap();
+
+        let loaded = manifest::load(&tmp.path().join(config::MANIFEST_FILE)).unwrap();
+        assert!(loaded.registries.is_empty());
+        // Plugin still references the removed registry
+        assert_eq!(
+            loaded.plugins["some-plugin"].registry.as_deref(),
+            Some("official")
+        );
+    }
+
+    /// Test `run_list` with empty registries.
+    #[test]
+    fn run_list_empty() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let manifest = make_manifest(BTreeMap::new());
+        write_manifest_to(tmp.path(), &manifest);
+
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let result = run_list();
+        std::env::set_current_dir(&original_dir).unwrap();
+
+        result.unwrap();
+    }
+
+    /// Test `run_list` with populated registries.
+    #[test]
+    fn run_list_populated() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let mut registries = BTreeMap::new();
+        registries.insert(
+            "official".to_string(),
+            RegistryConfig {
+                url: "https://github.com/anthropics/registry.git".to_string(),
+                auth: None,
+                pin: None,
+            },
+        );
+        registries.insert(
+            "private".to_string(),
+            RegistryConfig {
+                url: "https://github.com/corp/private-registry.git".to_string(),
+                auth: Some("token".to_string()),
+                pin: None,
+            },
+        );
+        let manifest = make_manifest(registries);
+        write_manifest_to(tmp.path(), &manifest);
+
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let result = run_list();
+        std::env::set_current_dir(&original_dir).unwrap();
+
+        result.unwrap();
+    }
+
+    /// Test `run_list` with auth and env var set.
+    #[test]
+    fn run_list_with_auth_env_set() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let mut registries = BTreeMap::new();
+        registries.insert(
+            "auth-reg".to_string(),
+            RegistryConfig {
+                url: "https://github.com/org/registry.git".to_string(),
+                auth: Some("token".to_string()),
+                pin: None,
+            },
+        );
+        let manifest = make_manifest(registries);
+        write_manifest_to(tmp.path(), &manifest);
+
+        unsafe { std::env::set_var("AGX_REGISTRY_AUTH_REG_TOKEN", "secret") };
+
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let result = run_list();
+        std::env::set_current_dir(&original_dir).unwrap();
+
+        unsafe { std::env::remove_var("AGX_REGISTRY_AUTH_REG_TOKEN") };
+
+        result.unwrap();
+    }
+
+    /// Test `run_refresh` with no manifest errors.
+    #[test]
+    fn run_refresh_no_manifest_errors() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        // No manifest file written
+
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let result = run_refresh(None);
+        std::env::set_current_dir(&original_dir).unwrap();
+
+        assert!(result.is_err());
+    }
+
+    /// Test `run_refresh` with empty registries succeeds.
+    #[test]
+    fn run_refresh_empty_registries() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let manifest = make_manifest(BTreeMap::new());
+        write_manifest_to(tmp.path(), &manifest);
+
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let result = run_refresh(None);
+        std::env::set_current_dir(&original_dir).unwrap();
+
+        result.unwrap();
+    }
+
+    /// Test `run_refresh` with a specific nonexistent registry name errors.
+    #[test]
+    fn run_refresh_nonexistent_registry_errors() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let manifest = make_manifest(BTreeMap::new());
+        write_manifest_to(tmp.path(), &manifest);
+
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let result = run_refresh(Some("nonexistent"));
+        std::env::set_current_dir(&original_dir).unwrap();
+
+        assert!(result.is_err());
+        let err = format!("{:#}", result.unwrap_err());
+        assert!(err.contains("not found"));
+    }
+
+    /// Test `run_pin` with no manifest errors.
+    #[test]
+    fn run_pin_no_manifest_errors() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let result = run_pin("some-reg");
+        std::env::set_current_dir(&original_dir).unwrap();
+
+        assert!(result.is_err());
+    }
+
+    /// Test `run_pin` with nonexistent registry errors.
+    #[test]
+    fn run_pin_nonexistent_registry_errors() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let manifest = make_manifest(BTreeMap::new());
+        write_manifest_to(tmp.path(), &manifest);
+
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let result = run_pin("nonexistent");
+        std::env::set_current_dir(&original_dir).unwrap();
+
+        assert!(result.is_err());
+        let err = format!("{:#}", result.unwrap_err());
+        assert!(err.contains("not found"));
+    }
+
+    /// Test `run_pin` with uncached registry errors.
+    #[test]
+    fn run_pin_uncached_registry_errors() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let cache_dir = tmp.path().join("cache");
+        unsafe { std::env::set_var("AGX_CACHE_DIR", &cache_dir) };
+
+        let mut registries = BTreeMap::new();
+        registries.insert(
+            "uncached".to_string(),
+            RegistryConfig {
+                url: "https://github.com/org/uncached-registry.git".to_string(),
+                auth: None,
+                pin: None,
+            },
+        );
+        let manifest = make_manifest(registries);
+        write_manifest_to(tmp.path(), &manifest);
+
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let result = run_pin("uncached");
+        std::env::set_current_dir(&original_dir).unwrap();
+
+        unsafe { std::env::remove_var("AGX_CACHE_DIR") };
+
+        assert!(result.is_err());
+        let err = format!("{:#}", result.unwrap_err());
+        assert!(err.contains("not cached"));
+    }
+
+    /// Test `run_add` and then `run_list` in sequence.
+    #[test]
+    fn run_add_then_list() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let manifest = make_manifest(BTreeMap::new());
+        write_manifest_to(tmp.path(), &manifest);
+
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        run_add("first", "https://example.com/first.git", None).unwrap();
+        run_add("second", "https://example.com/second.git", Some("token")).unwrap();
+        let result = run_list();
+
+        std::env::set_current_dir(&original_dir).unwrap();
+
+        result.unwrap();
+
+        let loaded = manifest::load(&tmp.path().join(config::MANIFEST_FILE)).unwrap();
+        assert_eq!(loaded.registries.len(), 2);
+    }
+
+    /// Test `run_add` then `run_remove` then verify manifest.
+    #[test]
+    fn run_add_then_remove() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let manifest = make_manifest(BTreeMap::new());
+        write_manifest_to(tmp.path(), &manifest);
+
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        run_add("temp-reg", "https://example.com/temp.git", None).unwrap();
+
+        // Verify it was added
+        let loaded = manifest::load(&tmp.path().join(config::MANIFEST_FILE)).unwrap();
+        assert_eq!(loaded.registries.len(), 1);
+
+        run_remove("temp-reg").unwrap();
+
+        std::env::set_current_dir(&original_dir).unwrap();
+
+        // Verify it was removed
+        let loaded = manifest::load(&tmp.path().join(config::MANIFEST_FILE)).unwrap();
+        assert!(loaded.registries.is_empty());
     }
 }

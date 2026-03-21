@@ -536,4 +536,547 @@ mod tests {
         };
         assert!(with_deleted.has_changes());
     }
+
+    // -----------------------------------------------------------------------
+    // Additional compute_simple_diff tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_compute_simple_diff_empty_old() {
+        let old = "";
+        let new = "line 1\nline 2\n";
+        let diff = compute_simple_diff(old, new);
+        assert_eq!(diff, vec!["+line 1", "+line 2"]);
+    }
+
+    #[test]
+    fn test_compute_simple_diff_empty_new() {
+        let old = "line 1\nline 2\n";
+        let new = "";
+        let diff = compute_simple_diff(old, new);
+        assert_eq!(diff, vec!["-line 1", "-line 2"]);
+    }
+
+    #[test]
+    fn test_compute_simple_diff_both_empty() {
+        let diff = compute_simple_diff("", "");
+        assert!(diff.is_empty());
+    }
+
+    #[test]
+    fn test_compute_simple_diff_only_additions_at_end() {
+        let old = "a\nb\n";
+        let new = "a\nb\nc\nd\n";
+        let diff = compute_simple_diff(old, new);
+        assert_eq!(diff, vec!["+c", "+d"]);
+    }
+
+    #[test]
+    fn test_compute_simple_diff_only_removals_at_end() {
+        let old = "a\nb\nc\nd\n";
+        let new = "a\nb\n";
+        let diff = compute_simple_diff(old, new);
+        assert_eq!(diff, vec!["-c", "-d"]);
+    }
+
+    #[test]
+    fn test_compute_simple_diff_interleaved_changes() {
+        let old = "a\nb\nc\nd\ne\n";
+        let new = "a\nX\nc\nY\ne\n";
+        let diff = compute_simple_diff(old, new);
+        assert_eq!(diff, vec!["-b", "+X", "-d", "+Y"]);
+    }
+
+    #[test]
+    fn test_compute_simple_diff_single_line_change() {
+        let old = "only line";
+        let new = "different line";
+        let diff = compute_simple_diff(old, new);
+        assert_eq!(diff, vec!["-only line", "+different line"]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Additional LCS tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_lcs_both_empty() {
+        let old: Vec<&str> = vec![];
+        let new: Vec<&str> = vec![];
+        let lcs = longest_common_subsequence(&old, &new);
+        assert!(lcs.is_empty());
+    }
+
+    #[test]
+    fn test_lcs_no_common_elements() {
+        let old = vec!["a", "b", "c"];
+        let new = vec!["x", "y", "z"];
+        let lcs = longest_common_subsequence(&old, &new);
+        assert!(lcs.is_empty());
+    }
+
+    #[test]
+    fn test_lcs_one_element_match() {
+        let old = vec!["a", "b", "c"];
+        let new = vec!["x", "b", "z"];
+        let lcs = longest_common_subsequence(&old, &new);
+        assert_eq!(lcs, vec![(1, 1)]);
+    }
+
+    #[test]
+    fn test_lcs_subsequence_not_substring() {
+        let old = vec!["a", "b", "c", "d"];
+        let new = vec!["a", "c", "d"];
+        let lcs = longest_common_subsequence(&old, &new);
+        assert_eq!(lcs, vec![(0, 0), (2, 1), (3, 2)]);
+    }
+
+    #[test]
+    fn test_lcs_old_empty_new_nonempty() {
+        let old: Vec<&str> = vec![];
+        let new = vec!["a", "b"];
+        let lcs = longest_common_subsequence(&old, &new);
+        assert!(lcs.is_empty());
+    }
+
+    #[test]
+    fn test_lcs_old_nonempty_new_empty() {
+        let old = vec!["a", "b"];
+        let new: Vec<&str> = vec![];
+        let lcs = longest_common_subsequence(&old, &new);
+        assert!(lcs.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Additional compare_trees tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_compare_trees_multiple_changes() {
+        let temp = tempdir().unwrap();
+        let project = tempdir().unwrap();
+
+        // Added file
+        fs::write(temp.path().join("added.txt"), "new").unwrap();
+        // Modified file
+        fs::write(temp.path().join("shared.txt"), "new content").unwrap();
+        fs::write(project.path().join("shared.txt"), "old content").unwrap();
+        // Deleted file with agx marker
+        let marker_content = format!("content with {}", GENERATED_MARKER);
+        fs::write(project.path().join(".mcp.json"), marker_content).unwrap();
+
+        let summary = compare_trees(temp.path(), project.path()).unwrap();
+        assert_eq!(summary.added, vec!["added.txt"]);
+        assert_eq!(summary.modified, vec!["shared.txt"]);
+        assert_eq!(summary.deleted, vec![".mcp.json"]);
+        assert!(summary.has_changes());
+    }
+
+    #[test]
+    fn test_compare_trees_nested_directories() {
+        let temp = tempdir().unwrap();
+        let project = tempdir().unwrap();
+
+        // Create nested file in temp only
+        fs::create_dir_all(temp.path().join("a/b")).unwrap();
+        fs::write(temp.path().join("a/b/deep.txt"), "deep content").unwrap();
+
+        let summary = compare_trees(temp.path(), project.path()).unwrap();
+        assert_eq!(summary.added, vec!["a/b/deep.txt"]);
+    }
+
+    #[test]
+    fn test_compare_trees_both_empty() {
+        let temp = tempdir().unwrap();
+        let project = tempdir().unwrap();
+
+        let summary = compare_trees(temp.path(), project.path()).unwrap();
+        assert!(!summary.has_changes());
+    }
+
+    #[test]
+    fn test_compare_trees_identical_content() {
+        let temp = tempdir().unwrap();
+        let project = tempdir().unwrap();
+
+        fs::write(temp.path().join("same.txt"), "identical").unwrap();
+        fs::write(project.path().join("same.txt"), "identical").unwrap();
+
+        let summary = compare_trees(temp.path(), project.path()).unwrap();
+        assert!(!summary.has_changes());
+    }
+
+    // -----------------------------------------------------------------------
+    // Additional file_has_agx_marker tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_file_has_agx_marker_embedded_in_json() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.json");
+        let content = format!(
+            "{{\n  \"_generated_by\": \"{}\",\n  \"key\": \"value\"\n}}",
+            GENERATED_MARKER
+        );
+        fs::write(&path, content).unwrap();
+        assert!(file_has_agx_marker(&path).unwrap());
+    }
+
+    #[test]
+    fn test_file_has_agx_marker_empty_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("empty.txt");
+        fs::write(&path, "").unwrap();
+        assert!(!file_has_agx_marker(&path).unwrap());
+    }
+
+    // -----------------------------------------------------------------------
+    // collect_generated_files tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_collect_generated_files_none() {
+        let dir = tempdir().unwrap();
+        let files = collect_generated_files(dir.path()).unwrap();
+        assert!(files.is_empty());
+    }
+
+    #[test]
+    fn test_collect_generated_files_with_marker() {
+        let dir = tempdir().unwrap();
+        let marker_content = format!("some prefix {} some suffix", GENERATED_MARKER);
+        fs::write(dir.path().join(".mcp.json"), &marker_content).unwrap();
+        fs::write(dir.path().join("CLAUDE.md"), "<!-- AUTO-GENERATED BY agx. Source: local -->").unwrap();
+        // File without marker should not be collected
+        fs::write(dir.path().join("GEMINI.md"), "not generated").unwrap();
+
+        let files = collect_generated_files(dir.path()).unwrap();
+        assert_eq!(files.len(), 2);
+        assert!(files.iter().any(|p| p.ends_with(".mcp.json")));
+        assert!(files.iter().any(|p| p.ends_with("CLAUDE.md")));
+    }
+
+    #[test]
+    fn test_collect_generated_files_claude_agents_dir() {
+        let dir = tempdir().unwrap();
+        let agents_dir = dir.path().join(".claude").join("agents");
+        fs::create_dir_all(&agents_dir).unwrap();
+        let marker_content = format!("content with {}", GENERATED_MARKER);
+        fs::write(agents_dir.join("reviewer.md"), &marker_content).unwrap();
+        fs::write(agents_dir.join("plain.md"), "no marker").unwrap();
+
+        let files = collect_generated_files(dir.path()).unwrap();
+        assert_eq!(files.len(), 1);
+        assert!(files[0].ends_with("reviewer.md"));
+    }
+
+    #[test]
+    fn test_collect_generated_files_claude_skills_dir() {
+        let dir = tempdir().unwrap();
+        let skills_dir = dir.path().join(".claude").join("skills");
+        fs::create_dir_all(&skills_dir).unwrap();
+        let marker_content = format!("content with {}", GENERATED_MARKER);
+        fs::write(skills_dir.join("deploy.md"), &marker_content).unwrap();
+
+        let files = collect_generated_files(dir.path()).unwrap();
+        assert_eq!(files.len(), 1);
+        assert!(files[0].ends_with("deploy.md"));
+    }
+
+    #[test]
+    fn test_collect_generated_files_gemini_dir() {
+        let dir = tempdir().unwrap();
+        let gemini_dir = dir.path().join(".gemini");
+        fs::create_dir_all(&gemini_dir).unwrap();
+        let marker_content = format!("<!-- AUTO-GENERATED BY agx. Source: local -->");
+        fs::write(gemini_dir.join("settings.json"), &marker_content).unwrap();
+
+        let files = collect_generated_files(dir.path()).unwrap();
+        assert_eq!(files.len(), 1);
+        assert!(files[0].ends_with("settings.json"));
+    }
+
+    #[test]
+    fn test_collect_generated_files_claude_settings() {
+        let dir = tempdir().unwrap();
+        let claude_dir = dir.path().join(".claude");
+        fs::create_dir_all(&claude_dir).unwrap();
+        let marker_content = format!("{{ \"_generated_by\": \"{}\" }}", GENERATED_MARKER);
+        fs::write(claude_dir.join("settings.json"), &marker_content).unwrap();
+
+        let files = collect_generated_files(dir.path()).unwrap();
+        assert_eq!(files.len(), 1);
+        assert!(files[0].ends_with("settings.json"));
+    }
+
+    // -----------------------------------------------------------------------
+    // DiffSummary additional tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_diff_summary_all_three_changes() {
+        let summary = DiffSummary {
+            added: vec!["a.txt".to_string()],
+            modified: vec!["b.txt".to_string()],
+            deleted: vec!["c.txt".to_string()],
+        };
+        assert!(summary.has_changes());
+    }
+
+    // -----------------------------------------------------------------------
+    // print_simple_diff tests (exercised for coverage)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_print_simple_diff_no_changes() {
+        let text = "line 1\nline 2\n";
+        // Just exercise the function — it prints to stdout
+        print_simple_diff(text, text);
+    }
+
+    #[test]
+    fn test_print_simple_diff_additions() {
+        let old = "a\nc\n";
+        let new = "a\nb\nc\n";
+        print_simple_diff(old, new);
+    }
+
+    #[test]
+    fn test_print_simple_diff_removals() {
+        let old = "a\nb\nc\n";
+        let new = "a\nc\n";
+        print_simple_diff(old, new);
+    }
+
+    #[test]
+    fn test_print_simple_diff_modifications() {
+        let old = "a\nold\nc\n";
+        let new = "a\nnew\nc\n";
+        print_simple_diff(old, new);
+    }
+
+    #[test]
+    fn test_print_simple_diff_truncation() {
+        // Create a diff with more lines than MAX_DIFF_LINES_PER_FILE
+        let mut old_lines = Vec::new();
+        let mut new_lines = Vec::new();
+        for i in 0..30 {
+            old_lines.push(format!("old line {}", i));
+            new_lines.push(format!("new line {}", i));
+        }
+        let old = old_lines.join("\n");
+        let new = new_lines.join("\n");
+        // This should trigger the truncation path
+        print_simple_diff(&old, &new);
+    }
+
+    #[test]
+    fn test_print_simple_diff_context_lines() {
+        // Diff with unchanged context lines (the " " prefix path)
+        let old = "unchanged\nold\nunchanged2\n";
+        let new = "unchanged\nnew\nunchanged2\n";
+        print_simple_diff(old, new);
+    }
+
+    // -----------------------------------------------------------------------
+    // compare_trees: more edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_compare_trees_deleted_claude_agents_dir() {
+        let temp = tempdir().unwrap();
+        let project = tempdir().unwrap();
+
+        // Create .claude/agents/ with marked files in project
+        let agents_dir = project.path().join(".claude").join("agents");
+        fs::create_dir_all(&agents_dir).unwrap();
+        let marker_content = format!("content with {}", GENERATED_MARKER);
+        fs::write(agents_dir.join("reviewer.md"), &marker_content).unwrap();
+
+        let summary = compare_trees(temp.path(), project.path()).unwrap();
+        assert!(summary.has_changes());
+        assert!(!summary.deleted.is_empty());
+    }
+
+    #[test]
+    fn test_compare_trees_deleted_claude_skills_dir() {
+        let temp = tempdir().unwrap();
+        let project = tempdir().unwrap();
+
+        let skills_dir = project.path().join(".claude").join("skills");
+        fs::create_dir_all(&skills_dir).unwrap();
+        let marker_content = format!("content with {}", GENERATED_MARKER);
+        fs::write(skills_dir.join("deploy.md"), &marker_content).unwrap();
+
+        let summary = compare_trees(temp.path(), project.path()).unwrap();
+        assert!(!summary.deleted.is_empty());
+    }
+
+    #[test]
+    fn test_compare_trees_deleted_gemini_dir() {
+        let temp = tempdir().unwrap();
+        let project = tempdir().unwrap();
+
+        let gemini_dir = project.path().join(".gemini");
+        fs::create_dir_all(&gemini_dir).unwrap();
+        let marker_content = format!("<!-- AUTO-GENERATED BY agx. Source: local -->");
+        fs::write(gemini_dir.join("settings.json"), &marker_content).unwrap();
+
+        let summary = compare_trees(temp.path(), project.path()).unwrap();
+        assert!(!summary.deleted.is_empty());
+    }
+
+    #[test]
+    fn test_compare_trees_non_marker_file_not_deleted() {
+        let temp = tempdir().unwrap();
+        let project = tempdir().unwrap();
+
+        // File in project without agx marker should NOT be listed as deleted
+        fs::write(project.path().join("CLAUDE.md"), "regular content without marker").unwrap();
+
+        let summary = compare_trees(temp.path(), project.path()).unwrap();
+        assert!(summary.deleted.is_empty());
+    }
+
+    #[test]
+    fn test_compare_trees_agents_md_deleted() {
+        let temp = tempdir().unwrap();
+        let project = tempdir().unwrap();
+
+        let marker = format!("<!-- AUTO-GENERATED BY agx. Source: local -->");
+        fs::write(project.path().join("AGENTS.md"), &marker).unwrap();
+
+        let summary = compare_trees(temp.path(), project.path()).unwrap();
+        assert_eq!(summary.deleted, vec!["AGENTS.md"]);
+    }
+
+    // -----------------------------------------------------------------------
+    // collect_generated_files: more edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_collect_generated_files_mixed_marker_types() {
+        let dir = tempdir().unwrap();
+        let marker_content = format!("content {}", GENERATED_MARKER);
+        let auto_marker = "<!-- AUTO-GENERATED BY agx. Source: local -->";
+
+        // Both marker types
+        fs::write(dir.path().join(".mcp.json"), &marker_content).unwrap();
+        fs::write(dir.path().join("CLAUDE.md"), auto_marker).unwrap();
+        // Non-marker file
+        fs::write(dir.path().join("GEMINI.md"), "no marker here").unwrap();
+
+        let files = collect_generated_files(dir.path()).unwrap();
+        assert_eq!(files.len(), 2);
+    }
+
+    #[test]
+    fn test_collect_generated_files_all_candidate_files() {
+        let dir = tempdir().unwrap();
+        let marker = format!("{}", GENERATED_MARKER);
+
+        // Create all candidate files with marker
+        fs::write(dir.path().join(".mcp.json"), &marker).unwrap();
+        fs::create_dir_all(dir.path().join(".claude")).unwrap();
+        fs::write(dir.path().join(".claude/settings.json"), &marker).unwrap();
+        fs::write(dir.path().join("CLAUDE.md"), &marker).unwrap();
+        fs::write(dir.path().join("GEMINI.md"), &marker).unwrap();
+        fs::write(dir.path().join("AGENTS.md"), &marker).unwrap();
+
+        let files = collect_generated_files(dir.path()).unwrap();
+        assert_eq!(files.len(), 5);
+    }
+
+    #[test]
+    fn test_collect_generated_files_agents_dir_ignores_non_marker() {
+        let dir = tempdir().unwrap();
+        let agents_dir = dir.path().join(".claude").join("agents");
+        fs::create_dir_all(&agents_dir).unwrap();
+        let marker = format!("{}", GENERATED_MARKER);
+        fs::write(agents_dir.join("marked.md"), &marker).unwrap();
+        fs::write(agents_dir.join("plain.md"), "no marker").unwrap();
+
+        let files = collect_generated_files(dir.path()).unwrap();
+        assert_eq!(files.len(), 1);
+        assert!(files[0].ends_with("marked.md"));
+    }
+
+    // -----------------------------------------------------------------------
+    // compute_simple_diff: more patterns
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_compute_simple_diff_reordered_lines() {
+        let old = "a\nb\nc\n";
+        let new = "c\nb\na\n";
+        let diff = compute_simple_diff(old, new);
+        // a and c are swapped, b stays
+        assert!(!diff.is_empty());
+    }
+
+    #[test]
+    fn test_compute_simple_diff_duplicate_lines() {
+        let old = "a\na\nb\n";
+        let new = "a\nb\nb\n";
+        let diff = compute_simple_diff(old, new);
+        assert!(!diff.is_empty());
+    }
+
+    #[test]
+    fn test_compute_simple_diff_added_at_start() {
+        let old = "b\nc\n";
+        let new = "a\nb\nc\n";
+        let diff = compute_simple_diff(old, new);
+        assert_eq!(diff, vec!["+a"]);
+    }
+
+    // -----------------------------------------------------------------------
+    // LCS: additional patterns
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_lcs_single_element_both() {
+        let old = vec!["a"];
+        let new = vec!["a"];
+        let lcs = longest_common_subsequence(&old, &new);
+        assert_eq!(lcs, vec![(0, 0)]);
+    }
+
+    #[test]
+    fn test_lcs_single_element_no_match() {
+        let old = vec!["a"];
+        let new = vec!["b"];
+        let lcs = longest_common_subsequence(&old, &new);
+        assert!(lcs.is_empty());
+    }
+
+    #[test]
+    fn test_lcs_prefix_overlap() {
+        let old = vec!["a", "b", "c"];
+        let new = vec!["a", "b", "d"];
+        let lcs = longest_common_subsequence(&old, &new);
+        assert_eq!(lcs, vec![(0, 0), (1, 1)]);
+    }
+
+    #[test]
+    fn test_lcs_suffix_overlap() {
+        let old = vec!["x", "b", "c"];
+        let new = vec!["y", "b", "c"];
+        let lcs = longest_common_subsequence(&old, &new);
+        assert_eq!(lcs, vec![(1, 1), (2, 2)]);
+    }
+
+    #[test]
+    fn test_compare_trees_results_sorted() {
+        let temp = tempdir().unwrap();
+        let project = tempdir().unwrap();
+
+        // Add files in reverse alphabetical order
+        fs::write(temp.path().join("z.txt"), "z").unwrap();
+        fs::write(temp.path().join("a.txt"), "a").unwrap();
+        fs::write(temp.path().join("m.txt"), "m").unwrap();
+
+        let summary = compare_trees(temp.path(), project.path()).unwrap();
+        assert_eq!(summary.added, vec!["a.txt", "m.txt", "z.txt"]);
+    }
 }

@@ -449,4 +449,646 @@ agents:
         assert_eq!(agent.git.as_deref(), Some("https://github.com/someone/agents.git"));
         assert_eq!(agent.path, "agents/helper.md");
     }
+
+    // ---- Tests that exercise the print_* functions for line coverage ----
+
+    #[test]
+    fn print_header_plugin() {
+        print_header("my-plugin", &AssetKind::Plugin);
+    }
+
+    #[test]
+    fn print_header_skill() {
+        print_header("my-skill", &AssetKind::Skill);
+    }
+
+    #[test]
+    fn print_header_agent() {
+        print_header("my-agent", &AssetKind::Agent);
+    }
+
+    #[test]
+    fn print_field_sample() {
+        print_field("Source", "git: https://example.com/repo.git");
+        print_field("Version", "1.2.3");
+    }
+
+    #[test]
+    fn print_plugin_info_registry_with_lockfile() {
+        let manifest = test_manifest();
+        let lockfile = test_lockfile();
+        let plugin = &manifest.plugins["quality-review"];
+        print_plugin_info("quality-review", plugin, &manifest, Some(&lockfile)).unwrap();
+    }
+
+    #[test]
+    fn print_plugin_info_registry_without_lockfile() {
+        let manifest = test_manifest();
+        let plugin = &manifest.plugins["quality-review"];
+        print_plugin_info("quality-review", plugin, &manifest, None).unwrap();
+    }
+
+    #[test]
+    fn print_plugin_info_registry_with_lockfile_no_match() {
+        // Plugin is in manifest but not in lockfile
+        let manifest = test_manifest();
+        let lockfile = Lockfile::new(); // empty lockfile
+        let plugin = &manifest.plugins["quality-review"];
+        print_plugin_info("quality-review", plugin, &manifest, Some(&lockfile)).unwrap();
+    }
+
+    #[test]
+    fn print_plugin_info_git_with_tag() {
+        let manifest = test_manifest();
+        let plugin = &manifest.plugins["custom-plugin"];
+        print_plugin_info("custom-plugin", plugin, &manifest, None).unwrap();
+    }
+
+    #[test]
+    fn print_plugin_info_git_with_branch() {
+        let manifest: AgentEnvironment = serde_yaml::from_str(
+            r#"
+name: test
+backends:
+  claude-code:
+    isolation: strict
+plugins:
+  branched-plugin:
+    git: https://github.com/someone/plugin.git
+    branch: main
+"#,
+        )
+        .unwrap();
+        let plugin = &manifest.plugins["branched-plugin"];
+        print_plugin_info("branched-plugin", plugin, &manifest, None).unwrap();
+    }
+
+    #[test]
+    fn print_plugin_info_git_with_commit() {
+        let manifest: AgentEnvironment = serde_yaml::from_str(
+            r#"
+name: test
+backends:
+  claude-code:
+    isolation: strict
+plugins:
+  commit-plugin:
+    git: https://github.com/someone/plugin.git
+    commit: abc123def456
+"#,
+        )
+        .unwrap();
+        let plugin = &manifest.plugins["commit-plugin"];
+        print_plugin_info("commit-plugin", plugin, &manifest, None).unwrap();
+    }
+
+    #[test]
+    fn print_plugin_info_git_with_lockfile() {
+        let manifest: AgentEnvironment = serde_yaml::from_str(
+            r#"
+name: test
+backends:
+  claude-code:
+    isolation: strict
+plugins:
+  git-plugin:
+    git: https://github.com/someone/plugin.git
+    tag: v1.0.0
+"#,
+        )
+        .unwrap();
+        let mut lockfile = Lockfile::new();
+        lockfile.plugins.insert(
+            "git-plugin".to_string(),
+            LockedPlugin {
+                source: LockedSource::Git {
+                    git: "https://github.com/someone/plugin.git".to_string(),
+                    path: None,
+                },
+                git_commit: Some("deadbeef12345678".to_string()),
+                integrity: Some("sha256:abcdef1234567890".to_string()),
+            },
+        );
+        let plugin = &manifest.plugins["git-plugin"];
+        print_plugin_info("git-plugin", plugin, &manifest, Some(&lockfile)).unwrap();
+    }
+
+    #[test]
+    fn print_skill_info_local() {
+        let manifest = test_manifest();
+        let skill = &manifest.skills["deploy-checklist"];
+        print_skill_info("deploy-checklist", skill, None).unwrap();
+    }
+
+    #[test]
+    fn print_skill_info_remote_with_tag() {
+        let manifest = test_manifest();
+        let skill = &manifest.skills["remote-skill"];
+        print_skill_info("remote-skill", skill, None).unwrap();
+    }
+
+    #[test]
+    fn print_skill_info_remote_with_lockfile() {
+        let manifest = test_manifest();
+        let skill = &manifest.skills["remote-skill"];
+        let mut lockfile = Lockfile::new();
+        lockfile.skills.insert(
+            "remote-skill".to_string(),
+            LockedSkill {
+                source: LockedSource::Git {
+                    git: "https://github.com/someone/skills.git".to_string(),
+                    path: None,
+                },
+                git_commit: Some("aabbccdd11223344".to_string()),
+                integrity: Some("sha256:1234abcd5678efgh".to_string()),
+            },
+        );
+        print_skill_info("remote-skill", skill, Some(&lockfile)).unwrap();
+    }
+
+    #[test]
+    fn print_skill_info_remote_with_branch() {
+        let manifest: AgentEnvironment = serde_yaml::from_str(
+            r#"
+name: test
+backends:
+  claude-code:
+    isolation: strict
+skills:
+  branched-skill:
+    git: https://github.com/someone/skills.git
+    path: skills/x
+    branch: develop
+"#,
+        )
+        .unwrap();
+        let skill = &manifest.skills["branched-skill"];
+        print_skill_info("branched-skill", skill, None).unwrap();
+    }
+
+    #[test]
+    fn print_skill_info_remote_with_commit() {
+        let manifest: AgentEnvironment = serde_yaml::from_str(
+            r#"
+name: test
+backends:
+  claude-code:
+    isolation: strict
+skills:
+  commit-skill:
+    git: https://github.com/someone/skills.git
+    path: skills/x
+    commit: abcdef1234567890
+"#,
+        )
+        .unwrap();
+        let skill = &manifest.skills["commit-skill"];
+        print_skill_info("commit-skill", skill, None).unwrap();
+    }
+
+    #[test]
+    fn print_agent_info_local_with_model() {
+        let manifest = test_manifest();
+        let agent = &manifest.agents["my-reviewer"];
+        print_agent_info("my-reviewer", agent, None).unwrap();
+    }
+
+    #[test]
+    fn print_agent_info_remote_with_tag() {
+        let manifest = test_manifest();
+        let agent = &manifest.agents["remote-agent"];
+        print_agent_info("remote-agent", agent, None).unwrap();
+    }
+
+    #[test]
+    fn print_agent_info_remote_with_lockfile() {
+        let manifest = test_manifest();
+        let agent = &manifest.agents["remote-agent"];
+        let mut lockfile = Lockfile::new();
+        lockfile.agents.insert(
+            "remote-agent".to_string(),
+            LockedAgent {
+                source: LockedSource::Git {
+                    git: "https://github.com/someone/agents.git".to_string(),
+                    path: None,
+                },
+                git_commit: Some("fedcba0987654321".to_string()),
+                integrity: Some("sha256:9876fedc5432abcd".to_string()),
+            },
+        );
+        print_agent_info("remote-agent", agent, Some(&lockfile)).unwrap();
+    }
+
+    #[test]
+    fn print_agent_info_remote_with_branch() {
+        let manifest: AgentEnvironment = serde_yaml::from_str(
+            r#"
+name: test
+backends:
+  claude-code:
+    isolation: strict
+agents:
+  branched-agent:
+    git: https://github.com/someone/agents.git
+    path: agents/x.md
+    branch: staging
+"#,
+        )
+        .unwrap();
+        let agent = &manifest.agents["branched-agent"];
+        print_agent_info("branched-agent", agent, None).unwrap();
+    }
+
+    #[test]
+    fn print_agent_info_remote_with_commit() {
+        let manifest: AgentEnvironment = serde_yaml::from_str(
+            r#"
+name: test
+backends:
+  claude-code:
+    isolation: strict
+agents:
+  commit-agent:
+    git: https://github.com/someone/agents.git
+    path: agents/x.md
+    commit: 1122334455667788
+"#,
+        )
+        .unwrap();
+        let agent = &manifest.agents["commit-agent"];
+        print_agent_info("commit-agent", agent, None).unwrap();
+    }
+
+    #[test]
+    fn print_registry_metadata_full() {
+        let entry = registry::PluginEntry {
+            description: "A great plugin".to_string(),
+            versions: BTreeMap::new(),
+            author: Some("Test Author".to_string()),
+            homepage: Some("https://example.com".to_string()),
+            repository: Some("https://github.com/test/plugin".to_string()),
+            license: Some("MIT".to_string()),
+            keywords: vec!["testing".to_string(), "awesome".to_string()],
+            tags: vec!["stable".to_string(), "v1".to_string()],
+            category: Some("Utilities".to_string()),
+            strict: None,
+        };
+        print_registry_metadata(&entry);
+    }
+
+    #[test]
+    fn print_registry_metadata_minimal() {
+        let entry = registry::PluginEntry {
+            description: "Minimal plugin".to_string(),
+            versions: BTreeMap::new(),
+            author: None,
+            homepage: None,
+            repository: None,
+            license: None,
+            keywords: vec![],
+            tags: vec![],
+            category: None,
+            strict: None,
+        };
+        print_registry_metadata(&entry);
+    }
+
+    #[test]
+    fn asset_kind_display() {
+        assert_eq!(AssetKind::Plugin.to_string(), "plugin");
+        assert_eq!(AssetKind::Skill.to_string(), "skill");
+        assert_eq!(AssetKind::Agent.to_string(), "agent");
+    }
+
+    // ---- run() function tests ----
+
+    #[test]
+    fn run_with_plugin() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("agent-environment.yml"),
+            r#"name: test
+backends:
+  claude-code: {}
+plugins:
+  my-plugin:
+    git: https://github.com/someone/plugin.git
+    tag: v1.0.0
+"#,
+        )
+        .unwrap();
+
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+        let result = run(InfoArgs {
+            name: "my-plugin".to_string(),
+        });
+        std::env::set_current_dir(&original_dir).unwrap();
+        drop(_guard);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn run_with_skill() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("agent-environment.yml"),
+            r#"name: test
+backends:
+  claude-code: {}
+skills:
+  my-skill:
+    path: ./skills/my-skill
+"#,
+        )
+        .unwrap();
+
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+        let result = run(InfoArgs {
+            name: "my-skill".to_string(),
+        });
+        std::env::set_current_dir(&original_dir).unwrap();
+        drop(_guard);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn run_with_agent() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("agent-environment.yml"),
+            r#"name: test
+backends:
+  claude-code: {}
+agents:
+  my-agent:
+    path: ./agents/my-agent.md
+    model: opus
+"#,
+        )
+        .unwrap();
+
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+        let result = run(InfoArgs {
+            name: "my-agent".to_string(),
+        });
+        std::env::set_current_dir(&original_dir).unwrap();
+        drop(_guard);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn run_asset_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("agent-environment.yml"),
+            "name: test\nbackends:\n  claude-code: {}\n",
+        )
+        .unwrap();
+
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+        let result = run(InfoArgs {
+            name: "nonexistent".to_string(),
+        });
+        std::env::set_current_dir(&original_dir).unwrap();
+        drop(_guard);
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[test]
+    fn run_no_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+        let result = run(InfoArgs {
+            name: "something".to_string(),
+        });
+        std::env::set_current_dir(&original_dir).unwrap();
+        drop(_guard);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn run_with_lockfile_registry_plugin() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("agent-environment.yml"),
+            r#"name: test
+backends:
+  claude-code: {}
+registries:
+  official:
+    url: https://github.com/example/registry
+plugins:
+  my-plugin:
+    registry: official
+    version: ">=1.0.0"
+"#,
+        )
+        .unwrap();
+
+        let mut lockfile = Lockfile::new();
+        lockfile.plugins.insert(
+            "my-plugin".to_string(),
+            LockedPlugin {
+                source: LockedSource::Registry {
+                    registry: "official".to_string(),
+                    resolved_version: "1.5.0".to_string(),
+                    path: None,
+                },
+                git_commit: Some("deadbeef".to_string()),
+                integrity: Some("sha256:abc123".to_string()),
+            },
+        );
+        agx::lockfile::save(&lockfile, &dir.path().join("agent-environment.lock")).unwrap();
+
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+        let result = run(InfoArgs {
+            name: "my-plugin".to_string(),
+        });
+        std::env::set_current_dir(&original_dir).unwrap();
+        drop(_guard);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn run_with_lockfile_git_plugin() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("agent-environment.yml"),
+            r#"name: test
+backends:
+  claude-code: {}
+plugins:
+  git-plugin:
+    git: https://github.com/someone/plugin.git
+    tag: v1.0.0
+"#,
+        )
+        .unwrap();
+
+        let mut lockfile = Lockfile::new();
+        lockfile.plugins.insert(
+            "git-plugin".to_string(),
+            LockedPlugin {
+                source: LockedSource::Git {
+                    git: "https://github.com/someone/plugin.git".to_string(),
+                    path: None,
+                },
+                git_commit: Some("deadbeef12345678".to_string()),
+                integrity: Some("sha256:abcdef1234567890".to_string()),
+            },
+        );
+        agx::lockfile::save(&lockfile, &dir.path().join("agent-environment.lock")).unwrap();
+
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+        let result = run(InfoArgs {
+            name: "git-plugin".to_string(),
+        });
+        std::env::set_current_dir(&original_dir).unwrap();
+        drop(_guard);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn run_with_lockfile_remote_skill() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("agent-environment.yml"),
+            r#"name: test
+backends:
+  claude-code: {}
+skills:
+  remote-skill:
+    git: https://github.com/someone/skills.git
+    path: skills/remote
+    tag: v1.0.0
+"#,
+        )
+        .unwrap();
+
+        let mut lockfile = Lockfile::new();
+        lockfile.skills.insert(
+            "remote-skill".to_string(),
+            LockedSkill {
+                source: LockedSource::Git {
+                    git: "https://github.com/someone/skills.git".to_string(),
+                    path: None,
+                },
+                git_commit: Some("aabbccdd".to_string()),
+                integrity: Some("sha256:1234".to_string()),
+            },
+        );
+        agx::lockfile::save(&lockfile, &dir.path().join("agent-environment.lock")).unwrap();
+
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+        let result = run(InfoArgs {
+            name: "remote-skill".to_string(),
+        });
+        std::env::set_current_dir(&original_dir).unwrap();
+        drop(_guard);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn run_with_lockfile_remote_agent() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("agent-environment.yml"),
+            r#"name: test
+backends:
+  claude-code: {}
+agents:
+  remote-agent:
+    git: https://github.com/someone/agents.git
+    path: agents/helper.md
+    tag: v2.0.0
+"#,
+        )
+        .unwrap();
+
+        let mut lockfile = Lockfile::new();
+        lockfile.agents.insert(
+            "remote-agent".to_string(),
+            LockedAgent {
+                source: LockedSource::Git {
+                    git: "https://github.com/someone/agents.git".to_string(),
+                    path: None,
+                },
+                git_commit: Some("fedcba09".to_string()),
+                integrity: Some("sha256:9876".to_string()),
+            },
+        );
+        agx::lockfile::save(&lockfile, &dir.path().join("agent-environment.lock")).unwrap();
+
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+        let result = run(InfoArgs {
+            name: "remote-agent".to_string(),
+        });
+        std::env::set_current_dir(&original_dir).unwrap();
+        drop(_guard);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn print_plugin_info_registry_non_git_lockfile_source() {
+        // Test the else branch where lockfile has a registry source but plugin asks for version
+        // and the locked source is not Registry variant
+        let manifest: AgentEnvironment = serde_yaml::from_str(
+            r#"
+name: test
+backends:
+  claude-code: {}
+registries:
+  official:
+    url: https://github.com/example/registry
+plugins:
+  my-plugin:
+    registry: official
+    version: ">=1.0.0"
+"#,
+        )
+        .unwrap();
+        let mut lockfile = Lockfile::new();
+        lockfile.plugins.insert(
+            "my-plugin".to_string(),
+            LockedPlugin {
+                source: LockedSource::Git {
+                    git: "https://github.com/someone/plugin.git".to_string(),
+                    path: None,
+                },
+                git_commit: Some("abc123".to_string()),
+                integrity: None,
+            },
+        );
+        let plugin = &manifest.plugins["my-plugin"];
+        print_plugin_info("my-plugin", plugin, &manifest, Some(&lockfile)).unwrap();
+    }
 }

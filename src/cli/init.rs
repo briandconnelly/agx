@@ -1513,4 +1513,1679 @@ Use the Bash() and Read() tools effectively.
         let servers = parse_mcp_json(&dir.path().join(".mcp.json"));
         assert!(servers.is_empty());
     }
+
+    #[test]
+    fn parse_mcp_json_missing_file() {
+        let dir = TempDir::new().unwrap();
+        let servers = parse_mcp_json(&dir.path().join("nonexistent.json"));
+        assert!(servers.is_empty());
+    }
+
+    #[test]
+    fn parse_mcp_json_with_mcp_servers_wrapper() {
+        let dir = TempDir::new().unwrap();
+        let mcp = r#"{
+            "mcpServers": {
+                "server-a": { "url": "https://a.example.com" },
+                "server-b": { "command": "python", "args": ["-m", "server"] }
+            }
+        }"#;
+        fs::write(dir.path().join(".mcp.json"), mcp).unwrap();
+        let servers = parse_mcp_json(&dir.path().join(".mcp.json"));
+        assert_eq!(servers.len(), 2);
+        assert_eq!(servers["server-a"].url.as_deref(), Some("https://a.example.com"));
+        assert_eq!(servers["server-b"].command.as_deref(), Some("python"));
+        assert_eq!(servers["server-b"].args, vec!["-m", "server"]);
+    }
+
+    #[test]
+    fn parse_mcp_json_direct_server_map() {
+        let dir = TempDir::new().unwrap();
+        let mcp = r#"{
+            "direct-server": {
+                "command": "node",
+                "args": ["index.js"],
+                "env": { "PORT": "3000" }
+            }
+        }"#;
+        fs::write(dir.path().join(".mcp.json"), mcp).unwrap();
+        let servers = parse_mcp_json(&dir.path().join(".mcp.json"));
+        assert_eq!(servers.len(), 1);
+        let srv = &servers["direct-server"];
+        assert_eq!(srv.command.as_deref(), Some("node"));
+        assert_eq!(srv.args, vec!["index.js"]);
+        assert_eq!(srv.env.get("PORT").map(|s| s.as_str()), Some("3000"));
+    }
+
+    #[test]
+    fn parse_mcp_json_empty_object() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join(".mcp.json"), "{}").unwrap();
+        let servers = parse_mcp_json(&dir.path().join(".mcp.json"));
+        assert!(servers.is_empty());
+    }
+
+    #[test]
+    fn parse_mcp_json_server_with_no_command_or_url() {
+        let dir = TempDir::new().unwrap();
+        let mcp = r#"{ "mcpServers": { "empty-srv": {} } }"#;
+        fs::write(dir.path().join(".mcp.json"), mcp).unwrap();
+        let servers = parse_mcp_json(&dir.path().join(".mcp.json"));
+        assert_eq!(servers.len(), 1);
+        let srv = &servers["empty-srv"];
+        assert!(srv.url.is_none());
+        assert!(srv.command.is_none());
+        assert!(srv.args.is_empty());
+        assert!(srv.env.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // split_claude_md edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn split_claude_md_empty_content() {
+        let (base, overlay) = split_claude_md("");
+        // Base should have the "all content was Claude-specific" header since there are no base sections.
+        assert!(base.contains("Project Context"));
+        // Overlay should be the placeholder.
+        assert!(overlay.contains("Claude Code Context"));
+        assert!(overlay.contains("Add Claude Code-specific instructions here"));
+    }
+
+    #[test]
+    fn split_claude_md_only_headers() {
+        let content = "# Header One\n# Header Two\n# Header Three\n";
+        let (base, overlay) = split_claude_md(content);
+        // None of these headers contain Claude keywords, so they go to base.
+        assert!(base.contains("Header One"));
+        assert!(base.contains("Header Two"));
+        assert!(base.contains("Header Three"));
+        // Overlay is just the placeholder.
+        assert!(overlay.contains("Add Claude Code-specific instructions here"));
+    }
+
+    #[test]
+    fn split_claude_md_nested_headers() {
+        let content = "\
+# Top Level
+
+Some general content.
+
+## Sub Section
+
+More general info.
+
+### Deep Section with Claude Code
+
+Use /compact to save tokens. Run Bash() for shell access.
+
+## Another Sub
+
+Generic sub content.
+";
+        let (base, overlay) = split_claude_md(content);
+        // The deep section mentions /compact and Bash( => overlay
+        assert!(overlay.contains("/compact"));
+        assert!(overlay.contains("Bash()"));
+        // The other sections should be in base
+        assert!(base.contains("general content"));
+        assert!(base.contains("Generic sub content"));
+    }
+
+    #[test]
+    fn split_claude_md_no_separable_sections() {
+        // Content with no headings at all — everything is one section.
+        let content = "Just some plain text with no markdown headings at all.\nSecond line.\n";
+        let (base, overlay) = split_claude_md(content);
+        // No claude keywords => all goes to base.
+        assert!(base.contains("plain text"));
+        assert!(overlay.contains("Add Claude Code-specific instructions here"));
+    }
+
+    #[test]
+    fn split_claude_md_single_claude_specific_section_no_headings() {
+        let content = "Always use Read() and Edit() tools. Configure .claude/ directory.\n";
+        let (base, overlay) = split_claude_md(content);
+        // Contains Claude keywords => goes to overlay. Base is empty placeholder.
+        assert!(overlay.contains("Read()"));
+        assert!(overlay.contains(".claude/"));
+        assert!(base.contains("All content was detected as Claude-specific"));
+    }
+
+    // -----------------------------------------------------------------------
+    // update_gitignore additional tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn gitignore_all_known_backends() {
+        let dir = TempDir::new().unwrap();
+        update_gitignore(dir.path(), &["claude-code", "gemini-cli", "codex", "cursor"], true).unwrap();
+
+        let content = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
+        assert!(content.contains(".agx/"));
+        assert!(content.contains(".claude/"));
+        assert!(content.contains(".mcp.json"));
+        assert!(content.contains("CLAUDE.md"));
+        assert!(content.contains(".gemini/"));
+        assert!(content.contains("GEMINI.md"));
+        assert!(content.contains(".codex/"));
+        assert!(content.contains(".cursor/"));
+        assert!(content.contains("AGENTS.md"));
+    }
+
+    #[test]
+    fn gitignore_with_context_adds_agents_md() {
+        let dir = TempDir::new().unwrap();
+        update_gitignore(dir.path(), &["claude-code"], true).unwrap();
+        let content = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
+        assert!(content.contains("AGENTS.md"));
+    }
+
+    #[test]
+    fn gitignore_without_context_no_agents_md() {
+        let dir = TempDir::new().unwrap();
+        update_gitignore(dir.path(), &["claude-code"], false).unwrap();
+        let content = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
+        assert!(!content.contains("AGENTS.md"));
+    }
+
+    #[test]
+    fn gitignore_unknown_backend_no_extra_patterns() {
+        let dir = TempDir::new().unwrap();
+        update_gitignore(dir.path(), &["unknown-backend"], false).unwrap();
+        let content = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
+        assert!(content.contains(".agx/"));
+        // No backend-specific patterns for unknown backend.
+        assert!(!content.contains(".claude/"));
+        assert!(!content.contains(".gemini/"));
+    }
+
+    #[test]
+    fn gitignore_noop_when_all_present() {
+        let dir = TempDir::new().unwrap();
+        // Write .gitignore with all patterns already present.
+        update_gitignore(dir.path(), &["claude-code"], false).unwrap();
+        let content1 = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
+
+        // Call again — should not change anything.
+        update_gitignore(dir.path(), &["claude-code"], false).unwrap();
+        let content2 = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
+        assert_eq!(content1, content2);
+    }
+
+    // -----------------------------------------------------------------------
+    // write_manifest tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn write_manifest_with_all_fields() {
+        let dir = TempDir::new().unwrap();
+        let mut backends = BTreeMap::new();
+        backends.insert(
+            "claude-code".to_string(),
+            BackendConfig {
+                default: Some(true),
+                isolation: Some(IsolationMode::Strict),
+                model: None,
+            },
+        );
+        backends.insert(
+            "gemini-cli".to_string(),
+            BackendConfig {
+                default: None,
+                isolation: Some(IsolationMode::Permissive),
+                model: None,
+            },
+        );
+
+        let mut mcp_servers = BTreeMap::new();
+        mcp_servers.insert(
+            "test-mcp".to_string(),
+            McpServerConfig {
+                url: None,
+                command: Some("node".to_string()),
+                args: vec!["server.js".to_string()],
+                env: BTreeMap::new(),
+            },
+        );
+
+        let mut skills = BTreeMap::new();
+        skills.insert(
+            "my-skill".to_string(),
+            SkillDependency {
+                git: None,
+                path: "./skills/my-skill".to_string(),
+                tag: None,
+                branch: None,
+                commit: None,
+            },
+        );
+
+        let manifest = AgentEnvironment {
+            name: "full-project".to_string(),
+            version: Some("1.0.0".to_string()),
+            description: Some("A full project".to_string()),
+            backends,
+            registries: BTreeMap::new(),
+            plugins: BTreeMap::new(),
+            skills,
+            agents: BTreeMap::new(),
+            mcp_servers,
+            settings: BTreeMap::new(),
+            paths: None,
+            context: Some(ContextConfig {
+                base: "./CONTEXT.md".to_string(),
+                overlays: {
+                    let mut m = BTreeMap::new();
+                    m.insert("claude-code".to_string(), "./CONTEXT.claude-code.md".to_string());
+                    m
+                },
+                children: vec![],
+            }),
+            hooks: None,
+        };
+
+        write_manifest(dir.path(), &manifest).unwrap();
+
+        let path = dir.path().join(MANIFEST_FILE);
+        let parsed: AgentEnvironment =
+            serde_yaml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(parsed.name, "full-project");
+        assert_eq!(parsed.backends.len(), 2);
+        assert_eq!(parsed.mcp_servers.len(), 1);
+        assert_eq!(parsed.skills.len(), 1);
+        assert!(parsed.context.is_some());
+    }
+
+    // -----------------------------------------------------------------------
+    // write_context_base and write_context_overlay tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn write_context_base_creates_file() {
+        let dir = TempDir::new().unwrap();
+        write_context_base(dir.path()).unwrap();
+        let path = dir.path().join("CONTEXT.md");
+        assert!(path.exists());
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains("Project Context"));
+        assert!(content.contains("Project Overview"));
+    }
+
+    #[test]
+    fn write_context_overlay_creates_file() {
+        let dir = TempDir::new().unwrap();
+        write_context_overlay(dir.path(), "claude-code", "CONTEXT.claude-code.md").unwrap();
+        let path = dir.path().join("CONTEXT.claude-code.md");
+        assert!(path.exists());
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains("claude-code Context"));
+    }
+
+    // -----------------------------------------------------------------------
+    // gitignore_patterns_for_backend tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn gitignore_patterns_claude_code() {
+        let patterns = gitignore_patterns_for_backend("claude-code");
+        assert!(patterns.contains(&".claude/"));
+        assert!(patterns.contains(&".mcp.json"));
+        assert!(patterns.contains(&"CLAUDE.md"));
+    }
+
+    #[test]
+    fn gitignore_patterns_gemini_cli() {
+        let patterns = gitignore_patterns_for_backend("gemini-cli");
+        assert!(patterns.contains(&".gemini/"));
+        assert!(patterns.contains(&"GEMINI.md"));
+    }
+
+    #[test]
+    fn gitignore_patterns_codex() {
+        let patterns = gitignore_patterns_for_backend("codex");
+        assert!(patterns.contains(&".codex/"));
+    }
+
+    #[test]
+    fn gitignore_patterns_cursor() {
+        let patterns = gitignore_patterns_for_backend("cursor");
+        assert!(patterns.contains(&".cursor/"));
+    }
+
+    #[test]
+    fn gitignore_patterns_unknown() {
+        let patterns = gitignore_patterns_for_backend("unknown");
+        assert!(patterns.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // ScanResult tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn scan_result_detected_backends_both() {
+        let scan = ScanResult {
+            claude_md: Some(PathBuf::from("CLAUDE.md")),
+            claude_md_lines: 10,
+            gemini_md: Some(PathBuf::from("GEMINI.md")),
+            gemini_md_lines: 5,
+            agents_md: None,
+            claude_settings: false,
+            claude_settings_value: None,
+            mcp_json: false,
+            mcp_servers: BTreeMap::new(),
+            claude_agents: Vec::new(),
+            claude_skills: Vec::new(),
+            gemini_dir: false,
+        };
+        let backends = scan.detected_backends();
+        assert!(backends.contains(&"claude-code"));
+        assert!(backends.contains(&"gemini-cli"));
+    }
+
+    #[test]
+    fn scan_result_has_detections_agents_md() {
+        let scan = ScanResult {
+            claude_md: None,
+            claude_md_lines: 0,
+            gemini_md: None,
+            gemini_md_lines: 0,
+            agents_md: Some(PathBuf::from("AGENTS.md")),
+            claude_settings: false,
+            claude_settings_value: None,
+            mcp_json: false,
+            mcp_servers: BTreeMap::new(),
+            claude_agents: Vec::new(),
+            claude_skills: Vec::new(),
+            gemini_dir: false,
+        };
+        assert!(scan.has_detections());
+    }
+
+    #[test]
+    fn scan_result_detected_backends_from_settings() {
+        let scan = ScanResult {
+            claude_md: None,
+            claude_md_lines: 0,
+            gemini_md: None,
+            gemini_md_lines: 0,
+            agents_md: None,
+            claude_settings: true,
+            claude_settings_value: None,
+            mcp_json: false,
+            mcp_servers: BTreeMap::new(),
+            claude_agents: Vec::new(),
+            claude_skills: Vec::new(),
+            gemini_dir: false,
+        };
+        assert!(scan.detected_backends().contains(&"claude-code"));
+    }
+
+    #[test]
+    fn scan_result_detected_backends_from_mcp() {
+        let scan = ScanResult {
+            claude_md: None,
+            claude_md_lines: 0,
+            gemini_md: None,
+            gemini_md_lines: 0,
+            agents_md: None,
+            claude_settings: false,
+            claude_settings_value: None,
+            mcp_json: true,
+            mcp_servers: BTreeMap::new(),
+            claude_agents: Vec::new(),
+            claude_skills: Vec::new(),
+            gemini_dir: false,
+        };
+        assert!(scan.detected_backends().contains(&"claude-code"));
+    }
+
+    #[test]
+    fn scan_result_detected_backends_from_agents() {
+        let scan = ScanResult {
+            claude_md: None,
+            claude_md_lines: 0,
+            gemini_md: None,
+            gemini_md_lines: 0,
+            agents_md: None,
+            claude_settings: false,
+            claude_settings_value: None,
+            mcp_json: false,
+            mcp_servers: BTreeMap::new(),
+            claude_agents: vec!["my-agent".to_string()],
+            claude_skills: Vec::new(),
+            gemini_dir: false,
+        };
+        assert!(scan.detected_backends().contains(&"claude-code"));
+    }
+
+    #[test]
+    fn scan_result_detected_backends_from_skills() {
+        let scan = ScanResult {
+            claude_md: None,
+            claude_md_lines: 0,
+            gemini_md: None,
+            gemini_md_lines: 0,
+            agents_md: None,
+            claude_settings: false,
+            claude_settings_value: None,
+            mcp_json: false,
+            mcp_servers: BTreeMap::new(),
+            claude_agents: Vec::new(),
+            claude_skills: vec!["my-skill".to_string()],
+            gemini_dir: false,
+        };
+        assert!(scan.detected_backends().contains(&"claude-code"));
+    }
+
+    #[test]
+    fn scan_result_detected_backends_from_gemini_dir() {
+        let scan = ScanResult {
+            claude_md: None,
+            claude_md_lines: 0,
+            gemini_md: None,
+            gemini_md_lines: 0,
+            agents_md: None,
+            claude_settings: false,
+            claude_settings_value: None,
+            mcp_json: false,
+            mcp_servers: BTreeMap::new(),
+            claude_agents: Vec::new(),
+            claude_skills: Vec::new(),
+            gemini_dir: true,
+        };
+        assert!(scan.detected_backends().contains(&"gemini-cli"));
+    }
+
+    // -----------------------------------------------------------------------
+    // is_claude_specific tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn is_claude_specific_detects_keywords() {
+        assert!(is_claude_specific("Use /compact to save context"));
+        assert!(is_claude_specific("Configure MCP server for tools"));
+        assert!(is_claude_specific("Use the Bash() tool"));
+        assert!(is_claude_specific("Edit CLAUDE.md for instructions"));
+        assert!(is_claude_specific("Use extended thinking for complex tasks"));
+        assert!(is_claude_specific("Run TodoWrite to track tasks"));
+        assert!(is_claude_specific("Configure .claude/ directory"));
+        assert!(is_claude_specific("Use a slash command to interact"));
+    }
+
+    #[test]
+    fn is_claude_specific_returns_false_for_generic() {
+        assert!(!is_claude_specific("Run cargo build to compile"));
+        assert!(!is_claude_specific("Use make test to run tests"));
+        assert!(!is_claude_specific("The architecture uses microservices"));
+    }
+
+    // -----------------------------------------------------------------------
+    // split_into_sections tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn split_into_sections_basic() {
+        let content = "# Section 1\nContent 1\n# Section 2\nContent 2\n";
+        let sections = split_into_sections(content);
+        assert_eq!(sections.len(), 2);
+        assert!(sections[0].contains("Section 1"));
+        assert!(sections[1].contains("Section 2"));
+    }
+
+    #[test]
+    fn split_into_sections_no_headings() {
+        let content = "Just plain text\nwith multiple lines\n";
+        let sections = split_into_sections(content);
+        assert_eq!(sections.len(), 1);
+        assert!(sections[0].contains("plain text"));
+    }
+
+    #[test]
+    fn split_into_sections_empty() {
+        let sections = split_into_sections("");
+        assert!(sections.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // print_scan_results coverage (just call it, no assertion on stdout)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn print_scan_results_no_detections() {
+        let scan = ScanResult {
+            claude_md: None,
+            claude_md_lines: 0,
+            gemini_md: None,
+            gemini_md_lines: 0,
+            agents_md: None,
+            claude_settings: false,
+            claude_settings_value: None,
+            mcp_json: false,
+            mcp_servers: BTreeMap::new(),
+            claude_agents: Vec::new(),
+            claude_skills: Vec::new(),
+            gemini_dir: false,
+        };
+        // Just exercise the function for coverage.
+        print_scan_results(&scan);
+    }
+
+    #[test]
+    fn print_scan_results_with_all_detections() {
+        let mut mcp_servers = BTreeMap::new();
+        mcp_servers.insert(
+            "test-server".to_string(),
+            McpServerConfig {
+                url: Some("https://example.com".to_string()),
+                command: None,
+                args: vec![],
+                env: BTreeMap::new(),
+            },
+        );
+        let scan = ScanResult {
+            claude_md: Some(PathBuf::from("CLAUDE.md")),
+            claude_md_lines: 42,
+            gemini_md: Some(PathBuf::from("GEMINI.md")),
+            gemini_md_lines: 10,
+            agents_md: Some(PathBuf::from("AGENTS.md")),
+            claude_settings: true,
+            claude_settings_value: None,
+            mcp_json: true,
+            mcp_servers,
+            claude_agents: vec!["reviewer".to_string()],
+            claude_skills: vec!["deploy".to_string()],
+            gemini_dir: true,
+        };
+        // Exercise the function for coverage.
+        print_scan_results(&scan);
+    }
+
+    // -----------------------------------------------------------------------
+    // print_scan_results additional coverage
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn print_scan_results_claude_only_no_agents_no_skills() {
+        let scan = ScanResult {
+            claude_md: Some(PathBuf::from("CLAUDE.md")),
+            claude_md_lines: 5,
+            gemini_md: None,
+            gemini_md_lines: 0,
+            agents_md: None,
+            claude_settings: false,
+            claude_settings_value: None,
+            mcp_json: false,
+            mcp_servers: BTreeMap::new(),
+            claude_agents: Vec::new(),
+            claude_skills: Vec::new(),
+            gemini_dir: false,
+        };
+        // Exercises the claude-code branch without settings/mcp/agents/skills.
+        print_scan_results(&scan);
+    }
+
+    #[test]
+    fn print_scan_results_gemini_only_no_gemini_md() {
+        // gemini_dir=true but gemini_md=None — exercises the gemini branch without GEMINI.md
+        let scan = ScanResult {
+            claude_md: None,
+            claude_md_lines: 0,
+            gemini_md: None,
+            gemini_md_lines: 0,
+            agents_md: None,
+            claude_settings: false,
+            claude_settings_value: None,
+            mcp_json: false,
+            mcp_servers: BTreeMap::new(),
+            claude_agents: Vec::new(),
+            claude_skills: Vec::new(),
+            gemini_dir: true,
+        };
+        print_scan_results(&scan);
+    }
+
+    #[test]
+    fn print_scan_results_multiple_mcp_servers() {
+        let mut mcp_servers = BTreeMap::new();
+        mcp_servers.insert(
+            "server-a".to_string(),
+            McpServerConfig {
+                url: Some("https://a.example.com".to_string()),
+                command: None,
+                args: vec![],
+                env: BTreeMap::new(),
+            },
+        );
+        mcp_servers.insert(
+            "server-b".to_string(),
+            McpServerConfig {
+                url: Some("https://b.example.com".to_string()),
+                command: None,
+                args: vec![],
+                env: BTreeMap::new(),
+            },
+        );
+        let scan = ScanResult {
+            claude_md: None,
+            claude_md_lines: 0,
+            gemini_md: None,
+            gemini_md_lines: 0,
+            agents_md: None,
+            claude_settings: false,
+            claude_settings_value: None,
+            mcp_json: true,
+            mcp_servers,
+            claude_agents: Vec::new(),
+            claude_skills: Vec::new(),
+            gemini_dir: false,
+        };
+        // Exercises the mcp_json branch with count > 1 (plural "servers")
+        print_scan_results(&scan);
+    }
+
+    #[test]
+    fn print_scan_results_single_mcp_server() {
+        let mut mcp_servers = BTreeMap::new();
+        mcp_servers.insert(
+            "only-server".to_string(),
+            McpServerConfig {
+                url: Some("https://only.example.com".to_string()),
+                command: None,
+                args: vec![],
+                env: BTreeMap::new(),
+            },
+        );
+        let scan = ScanResult {
+            claude_md: None,
+            claude_md_lines: 0,
+            gemini_md: None,
+            gemini_md_lines: 0,
+            agents_md: None,
+            claude_settings: false,
+            claude_settings_value: None,
+            mcp_json: true,
+            mcp_servers,
+            claude_agents: Vec::new(),
+            claude_skills: Vec::new(),
+            gemini_dir: false,
+        };
+        // Exercises the mcp_json branch with count == 1 (singular "server")
+        print_scan_results(&scan);
+    }
+
+    #[test]
+    fn print_scan_results_single_agent() {
+        let scan = ScanResult {
+            claude_md: None,
+            claude_md_lines: 0,
+            gemini_md: None,
+            gemini_md_lines: 0,
+            agents_md: None,
+            claude_settings: false,
+            claude_settings_value: None,
+            mcp_json: false,
+            mcp_servers: BTreeMap::new(),
+            claude_agents: vec!["solo-agent".to_string()],
+            claude_skills: Vec::new(),
+            gemini_dir: false,
+        };
+        // Exercises the agents branch with count == 1 (singular "agent")
+        print_scan_results(&scan);
+    }
+
+    #[test]
+    fn print_scan_results_single_skill() {
+        let scan = ScanResult {
+            claude_md: None,
+            claude_md_lines: 0,
+            gemini_md: None,
+            gemini_md_lines: 0,
+            agents_md: None,
+            claude_settings: false,
+            claude_settings_value: None,
+            mcp_json: false,
+            mcp_servers: BTreeMap::new(),
+            claude_agents: Vec::new(),
+            claude_skills: vec!["solo-skill".to_string()],
+            gemini_dir: false,
+        };
+        // Exercises the skills branch with count == 1 (singular "skill")
+        print_scan_results(&scan);
+    }
+
+    // -----------------------------------------------------------------------
+    // scan_project additional coverage
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn scan_detects_agents_md() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("AGENTS.md"), "# Agents\n").unwrap();
+        let scan = scan_project(dir.path());
+        assert!(scan.has_detections());
+        assert!(scan.agents_md.is_some());
+    }
+
+    #[test]
+    fn scan_agents_dir_ignores_non_md_files() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join(".claude/agents")).unwrap();
+        fs::write(dir.path().join(".claude/agents/good.md"), "# Agent").unwrap();
+        fs::write(dir.path().join(".claude/agents/ignored.txt"), "not an agent").unwrap();
+        fs::write(dir.path().join(".claude/agents/also-ignored.json"), "{}").unwrap();
+        let scan = scan_project(dir.path());
+        assert_eq!(scan.claude_agents, vec!["good"]);
+    }
+
+    #[test]
+    fn scan_skills_dir_ignores_files() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join(".claude/skills/real-skill")).unwrap();
+        fs::write(dir.path().join(".claude/skills/not-a-skill.txt"), "file").unwrap();
+        let scan = scan_project(dir.path());
+        assert_eq!(scan.claude_skills, vec!["real-skill"]);
+    }
+
+    #[test]
+    fn scan_claude_settings_invalid_json() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join(".claude")).unwrap();
+        fs::write(dir.path().join(".claude/settings.json"), "not valid json").unwrap();
+        let scan = scan_project(dir.path());
+        assert!(scan.claude_settings);
+        assert!(scan.claude_settings_value.is_none());
+    }
+
+    #[test]
+    fn scan_full_project_with_everything() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("CLAUDE.md"), "# Claude\nLine 2\nLine 3\n").unwrap();
+        fs::write(dir.path().join("GEMINI.md"), "# Gemini\nLine 2\n").unwrap();
+        fs::write(dir.path().join("AGENTS.md"), "# Agents\n").unwrap();
+        fs::create_dir_all(dir.path().join(".claude/agents")).unwrap();
+        fs::create_dir_all(dir.path().join(".claude/skills/my-skill")).unwrap();
+        fs::write(dir.path().join(".claude/agents/helper.md"), "# Helper").unwrap();
+        fs::write(dir.path().join(".claude/settings.json"), r#"{"key": "val"}"#).unwrap();
+        let mcp = r#"{"mcpServers": {"srv": {"url": "https://example.com"}}}"#;
+        fs::write(dir.path().join(".mcp.json"), mcp).unwrap();
+        fs::create_dir_all(dir.path().join(".gemini")).unwrap();
+
+        let scan = scan_project(dir.path());
+        assert!(scan.has_detections());
+        assert!(scan.claude_md.is_some());
+        assert_eq!(scan.claude_md_lines, 3);
+        assert!(scan.gemini_md.is_some());
+        assert_eq!(scan.gemini_md_lines, 2);
+        assert!(scan.agents_md.is_some());
+        assert!(scan.claude_settings);
+        assert!(scan.claude_settings_value.is_some());
+        assert!(scan.mcp_json);
+        assert_eq!(scan.mcp_servers.len(), 1);
+        assert_eq!(scan.claude_agents, vec!["helper"]);
+        assert_eq!(scan.claude_skills, vec!["my-skill"]);
+        assert!(scan.gemini_dir);
+
+        let backends = scan.detected_backends();
+        assert!(backends.contains(&"claude-code"));
+        assert!(backends.contains(&"gemini-cli"));
+    }
+
+    // -----------------------------------------------------------------------
+    // write_manifest edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn write_manifest_with_registries() {
+        let dir = TempDir::new().unwrap();
+
+        let mut registries = BTreeMap::new();
+        registries.insert(
+            "my-registry".to_string(),
+            RegistryConfig {
+                url: "https://registry.example.com".to_string(),
+                auth: None,
+                pin: None,
+            },
+        );
+
+        let manifest = AgentEnvironment {
+            name: "registry-project".to_string(),
+            version: Some("0.1.0".to_string()),
+            description: None,
+            backends: BTreeMap::new(),
+            registries,
+            plugins: BTreeMap::new(),
+            skills: BTreeMap::new(),
+            agents: BTreeMap::new(),
+            mcp_servers: BTreeMap::new(),
+            settings: BTreeMap::new(),
+            paths: None,
+            context: None,
+            hooks: None,
+        };
+
+        write_manifest(dir.path(), &manifest).unwrap();
+        let path = dir.path().join(MANIFEST_FILE);
+        let parsed: AgentEnvironment =
+            serde_yaml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(parsed.registries.len(), 1);
+        assert_eq!(parsed.registries["my-registry"].url, "https://registry.example.com");
+    }
+
+    #[test]
+    fn write_manifest_with_agents() {
+        let dir = TempDir::new().unwrap();
+
+        let mut agents = BTreeMap::new();
+        agents.insert(
+            "code-reviewer".to_string(),
+            AgentDependency {
+                git: None,
+                path: "./.claude/agents/code-reviewer.md".to_string(),
+                tag: None,
+                branch: None,
+                commit: None,
+                model: None,
+                parameters: BTreeMap::new(),
+            },
+        );
+
+        let manifest = AgentEnvironment {
+            name: "agents-project".to_string(),
+            version: Some("0.1.0".to_string()),
+            description: None,
+            backends: BTreeMap::new(),
+            registries: BTreeMap::new(),
+            plugins: BTreeMap::new(),
+            skills: BTreeMap::new(),
+            agents,
+            mcp_servers: BTreeMap::new(),
+            settings: BTreeMap::new(),
+            paths: None,
+            context: None,
+            hooks: None,
+        };
+
+        write_manifest(dir.path(), &manifest).unwrap();
+        let path = dir.path().join(MANIFEST_FILE);
+        let parsed: AgentEnvironment =
+            serde_yaml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(parsed.agents.len(), 1);
+        assert!(parsed.agents.contains_key("code-reviewer"));
+    }
+
+    // -----------------------------------------------------------------------
+    // write_context_overlay additional coverage
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn write_context_overlay_gemini() {
+        let dir = TempDir::new().unwrap();
+        write_context_overlay(dir.path(), "gemini-cli", "CONTEXT.gemini-cli.md").unwrap();
+        let path = dir.path().join("CONTEXT.gemini-cli.md");
+        assert!(path.exists());
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains("gemini-cli Context"));
+        assert!(content.contains("specific to gemini-cli"));
+    }
+
+    // -----------------------------------------------------------------------
+    // update_gitignore edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn gitignore_appends_to_file_without_trailing_newline() {
+        let dir = TempDir::new().unwrap();
+        // Write a .gitignore that does NOT end with a newline
+        fs::write(dir.path().join(".gitignore"), "node_modules/").unwrap();
+        update_gitignore(dir.path(), &["claude-code"], false).unwrap();
+        let content = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
+        assert!(content.contains("node_modules/"));
+        assert!(content.contains(".agx/"));
+        assert!(content.contains(".claude/"));
+    }
+
+    #[test]
+    fn gitignore_windsurf_backend_has_no_patterns() {
+        // windsurf is not in gitignore_patterns_for_backend currently
+        let patterns = gitignore_patterns_for_backend("windsurf");
+        assert!(patterns.is_empty());
+    }
+
+    #[test]
+    fn gitignore_empty_backends_list() {
+        let dir = TempDir::new().unwrap();
+        update_gitignore(dir.path(), &[], false).unwrap();
+        let content = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
+        assert!(content.contains(".agx/"));
+        // No backend-specific patterns
+        assert!(!content.contains(".claude/"));
+        assert!(!content.contains(".gemini/"));
+    }
+
+    // -----------------------------------------------------------------------
+    // split_claude_md additional coverage
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn split_claude_md_case_insensitive_keyword_match() {
+        let content = "\
+# Setup
+
+Configure your CLAUDE CODE environment properly.
+";
+        let (base, overlay) = split_claude_md(content);
+        // "claude code" (case insensitive) should be detected
+        assert!(overlay.contains("CLAUDE CODE"));
+        assert!(base.contains("All content was detected as Claude-specific"));
+    }
+
+    #[test]
+    fn split_claude_md_mixed_sections_complex() {
+        let content = "\
+# Introduction
+
+This project uses Rust.
+
+## Build Steps
+
+cargo build
+cargo test
+
+## Memory Management
+
+Use claude memory feature and /memory command.
+
+## Testing
+
+Use cargo test with --release.
+
+## Tool Usage
+
+Always prefer the Read() and Grep() tools.
+
+## Deployment
+
+Deploy via Docker.
+";
+        let (base, overlay) = split_claude_md(content);
+        // Generic sections
+        assert!(base.contains("This project uses Rust"));
+        assert!(base.contains("cargo build"));
+        assert!(base.contains("Deploy via Docker"));
+        // Claude-specific sections
+        assert!(overlay.contains("claude memory"));
+        assert!(overlay.contains("/memory"));
+        assert!(overlay.contains("Read()"));
+        assert!(overlay.contains("Grep()"));
+    }
+
+    #[test]
+    fn split_into_sections_heading_at_start() {
+        // When the first line is a heading, should still produce one section
+        let content = "# Only Section\nSome text\n";
+        let sections = split_into_sections(content);
+        assert_eq!(sections.len(), 1);
+        assert!(sections[0].contains("Only Section"));
+        assert!(sections[0].contains("Some text"));
+    }
+
+    #[test]
+    fn split_into_sections_multiple_heading_levels() {
+        let content = "# H1\nContent A\n## H2\nContent B\n### H3\nContent C\n";
+        let sections = split_into_sections(content);
+        assert_eq!(sections.len(), 3);
+    }
+
+    // -----------------------------------------------------------------------
+    // is_claude_specific additional keywords
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn is_claude_specific_all_keywords() {
+        // Verify each keyword individually
+        for kw in CLAUDE_KEYWORDS {
+            assert!(
+                is_claude_specific(&format!("Some text containing {} here", kw)),
+                "Keyword '{}' was not detected",
+                kw
+            );
+        }
+    }
+
+    #[test]
+    fn is_claude_specific_case_insensitive() {
+        assert!(is_claude_specific("use EXTENDED THINKING for tasks"));
+        assert!(is_claude_specific("configure MCP SERVER properly"));
+        assert!(is_claude_specific("TODOWRITE for tracking"));
+    }
+
+    // -----------------------------------------------------------------------
+    // ScanResult has_detections / detected_backends edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn scan_result_no_detections_empty() {
+        let scan = ScanResult {
+            claude_md: None,
+            claude_md_lines: 0,
+            gemini_md: None,
+            gemini_md_lines: 0,
+            agents_md: None,
+            claude_settings: false,
+            claude_settings_value: None,
+            mcp_json: false,
+            mcp_servers: BTreeMap::new(),
+            claude_agents: Vec::new(),
+            claude_skills: Vec::new(),
+            gemini_dir: false,
+        };
+        assert!(!scan.has_detections());
+        assert!(scan.detected_backends().is_empty());
+    }
+
+    #[test]
+    fn scan_result_detected_backends_order() {
+        // When both claude and gemini are detected, claude-code comes first
+        let scan = ScanResult {
+            claude_md: Some(PathBuf::from("CLAUDE.md")),
+            claude_md_lines: 1,
+            gemini_md: None,
+            gemini_md_lines: 0,
+            agents_md: None,
+            claude_settings: false,
+            claude_settings_value: None,
+            mcp_json: false,
+            mcp_servers: BTreeMap::new(),
+            claude_agents: Vec::new(),
+            claude_skills: Vec::new(),
+            gemini_dir: true,
+        };
+        let backends = scan.detected_backends();
+        assert_eq!(backends.len(), 2);
+        assert_eq!(backends[0], "claude-code");
+        assert_eq!(backends[1], "gemini-cli");
+    }
+
+    // -----------------------------------------------------------------------
+    // parse_mcp_json additional edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_mcp_json_server_with_empty_args_and_env() {
+        let dir = TempDir::new().unwrap();
+        let mcp = r#"{
+            "mcpServers": {
+                "minimal": {
+                    "command": "node",
+                    "args": [],
+                    "env": {}
+                }
+            }
+        }"#;
+        fs::write(dir.path().join(".mcp.json"), mcp).unwrap();
+        let servers = parse_mcp_json(&dir.path().join(".mcp.json"));
+        assert_eq!(servers.len(), 1);
+        let srv = &servers["minimal"];
+        assert_eq!(srv.command.as_deref(), Some("node"));
+        assert!(srv.args.is_empty());
+        assert!(srv.env.is_empty());
+    }
+
+    #[test]
+    fn parse_mcp_json_multiple_env_vars() {
+        let dir = TempDir::new().unwrap();
+        let mcp = r#"{
+            "mcpServers": {
+                "envtest": {
+                    "command": "python",
+                    "args": ["serve.py"],
+                    "env": {
+                        "DB_HOST": "localhost",
+                        "DB_PORT": "5432",
+                        "DB_NAME": "mydb"
+                    }
+                }
+            }
+        }"#;
+        fs::write(dir.path().join(".mcp.json"), mcp).unwrap();
+        let servers = parse_mcp_json(&dir.path().join(".mcp.json"));
+        let srv = &servers["envtest"];
+        assert_eq!(srv.env.len(), 3);
+        assert_eq!(srv.env["DB_HOST"], "localhost");
+        assert_eq!(srv.env["DB_PORT"], "5432");
+        assert_eq!(srv.env["DB_NAME"], "mydb");
+    }
+
+    // -----------------------------------------------------------------------
+    // run() tests — non-interactive mode (--yes)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn run_non_interactive_creates_manifest_and_context() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = TempDir::new().unwrap();
+        let tmp_cache = TempDir::new().unwrap();
+        unsafe { std::env::set_var("AGX_CACHE_DIR", tmp_cache.path()) };
+
+        let old_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        let args = InitArgs {
+            force: false,
+            scan_only: false,
+            non_interactive: true,
+            name: Some("test-ni".to_string()),
+            backend: vec![],
+        };
+
+        let result = run(args);
+        std::env::set_current_dir(&old_cwd).unwrap();
+        unsafe { std::env::remove_var("AGX_CACHE_DIR") };
+
+        assert!(result.is_ok(), "run non-interactive failed: {:?}", result.err());
+
+        // Manifest should be created
+        let manifest_path = dir.path().join(MANIFEST_FILE);
+        assert!(manifest_path.exists(), "manifest not created");
+        let parsed: AgentEnvironment =
+            serde_yaml::from_str(&fs::read_to_string(&manifest_path).unwrap()).unwrap();
+        assert_eq!(parsed.name, "test-ni");
+        assert!(parsed.backends.contains_key("claude-code"));
+        assert_eq!(parsed.version.as_deref(), Some("0.1.0"));
+
+        // Context files should be created
+        assert!(dir.path().join("CONTEXT.md").exists());
+        assert!(dir.path().join("CONTEXT.claude-code.md").exists());
+
+        // .gitignore should be created
+        assert!(dir.path().join(".gitignore").exists());
+    }
+
+    #[test]
+    fn run_non_interactive_custom_backends() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = TempDir::new().unwrap();
+        let tmp_cache = TempDir::new().unwrap();
+        unsafe { std::env::set_var("AGX_CACHE_DIR", tmp_cache.path()) };
+
+        let old_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        let args = InitArgs {
+            force: false,
+            scan_only: false,
+            non_interactive: true,
+            name: Some("multi-backend".to_string()),
+            backend: vec!["claude-code".to_string(), "gemini-cli".to_string()],
+        };
+
+        let result = run(args);
+        std::env::set_current_dir(&old_cwd).unwrap();
+        unsafe { std::env::remove_var("AGX_CACHE_DIR") };
+
+        assert!(result.is_ok());
+
+        let manifest_path = dir.path().join(MANIFEST_FILE);
+        let parsed: AgentEnvironment =
+            serde_yaml::from_str(&fs::read_to_string(&manifest_path).unwrap()).unwrap();
+        assert!(parsed.backends.contains_key("claude-code"));
+        assert!(parsed.backends.contains_key("gemini-cli"));
+        // First backend should be default
+        assert_eq!(parsed.backends["claude-code"].default, Some(true));
+        assert_eq!(parsed.backends["gemini-cli"].default, None);
+
+        // Both overlay files should exist
+        assert!(dir.path().join("CONTEXT.claude-code.md").exists());
+        assert!(dir.path().join("CONTEXT.gemini-cli.md").exists());
+    }
+
+    #[test]
+    fn run_non_interactive_defaults_name_from_dir() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = TempDir::new().unwrap();
+        let tmp_cache = TempDir::new().unwrap();
+        unsafe { std::env::set_var("AGX_CACHE_DIR", tmp_cache.path()) };
+
+        let old_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        let args = InitArgs {
+            force: false,
+            scan_only: false,
+            non_interactive: true,
+            name: None,  // Should default to directory name
+            backend: vec![],
+        };
+
+        let result = run(args);
+        std::env::set_current_dir(&old_cwd).unwrap();
+        unsafe { std::env::remove_var("AGX_CACHE_DIR") };
+
+        assert!(result.is_ok());
+
+        let manifest_path = dir.path().join(MANIFEST_FILE);
+        let parsed: AgentEnvironment =
+            serde_yaml::from_str(&fs::read_to_string(&manifest_path).unwrap()).unwrap();
+        // Name should be derived from the dir name
+        assert!(!parsed.name.is_empty());
+    }
+
+    #[test]
+    fn run_errors_when_manifest_exists_no_force() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join(MANIFEST_FILE), "name: existing\n").unwrap();
+
+        let old_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        let args = InitArgs {
+            force: false,
+            scan_only: false,
+            non_interactive: true,
+            name: None,
+            backend: vec![],
+        };
+
+        let result = run(args);
+        std::env::set_current_dir(&old_cwd).unwrap();
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("already exists"));
+    }
+
+    #[test]
+    fn run_force_overwrites_existing_manifest() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = TempDir::new().unwrap();
+        let tmp_cache = TempDir::new().unwrap();
+        unsafe { std::env::set_var("AGX_CACHE_DIR", tmp_cache.path()) };
+
+        fs::write(dir.path().join(MANIFEST_FILE), "name: old\nbackends:\n  claude-code: {}\n").unwrap();
+
+        let old_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        let args = InitArgs {
+            force: true,
+            scan_only: false,
+            non_interactive: true,
+            name: Some("new-name".to_string()),
+            backend: vec![],
+        };
+
+        let result = run(args);
+        std::env::set_current_dir(&old_cwd).unwrap();
+        unsafe { std::env::remove_var("AGX_CACHE_DIR") };
+
+        assert!(result.is_ok());
+
+        let manifest_path = dir.path().join(MANIFEST_FILE);
+        let parsed: AgentEnvironment =
+            serde_yaml::from_str(&fs::read_to_string(&manifest_path).unwrap()).unwrap();
+        assert_eq!(parsed.name, "new-name");
+    }
+
+    #[test]
+    fn run_scan_only_does_not_create_manifest() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = TempDir::new().unwrap();
+        // Create some detectable files
+        fs::write(dir.path().join("CLAUDE.md"), "# Test").unwrap();
+
+        let old_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        let args = InitArgs {
+            force: false,
+            scan_only: true,
+            non_interactive: false,
+            name: None,
+            backend: vec![],
+        };
+
+        let result = run(args);
+        std::env::set_current_dir(&old_cwd).unwrap();
+
+        assert!(result.is_ok());
+        assert!(!dir.path().join(MANIFEST_FILE).exists());
+    }
+
+    #[test]
+    fn run_scan_only_empty_dir() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = TempDir::new().unwrap();
+
+        let old_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        let args = InitArgs {
+            force: false,
+            scan_only: true,
+            non_interactive: false,
+            name: None,
+            backend: vec![],
+        };
+
+        let result = run(args);
+        std::env::set_current_dir(&old_cwd).unwrap();
+
+        assert!(result.is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // run_non_interactive_flow additional scenarios
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn non_interactive_manifest_has_context_config() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = TempDir::new().unwrap();
+        let tmp_cache = TempDir::new().unwrap();
+        unsafe { std::env::set_var("AGX_CACHE_DIR", tmp_cache.path()) };
+
+        let old_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        let args = InitArgs {
+            force: false,
+            scan_only: false,
+            non_interactive: true,
+            name: Some("ctx-test".to_string()),
+            backend: vec!["claude-code".to_string()],
+        };
+
+        let result = run(args);
+        std::env::set_current_dir(&old_cwd).unwrap();
+        unsafe { std::env::remove_var("AGX_CACHE_DIR") };
+
+        assert!(result.is_ok());
+
+        let manifest_path = dir.path().join(MANIFEST_FILE);
+        let parsed: AgentEnvironment =
+            serde_yaml::from_str(&fs::read_to_string(&manifest_path).unwrap()).unwrap();
+        let ctx = parsed.context.unwrap();
+        assert_eq!(ctx.base, "./CONTEXT.md");
+        assert!(ctx.overlays.contains_key("claude-code"));
+        assert_eq!(ctx.overlays["claude-code"], "./CONTEXT.claude-code.md");
+    }
+
+    // -----------------------------------------------------------------------
+    // print_scan_results additional coverage: multiple agents/skills
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn print_scan_results_multiple_agents() {
+        let scan = ScanResult {
+            claude_md: None,
+            claude_md_lines: 0,
+            gemini_md: None,
+            gemini_md_lines: 0,
+            agents_md: None,
+            claude_settings: false,
+            claude_settings_value: None,
+            mcp_json: false,
+            mcp_servers: BTreeMap::new(),
+            claude_agents: vec!["agent-a".to_string(), "agent-b".to_string()],
+            claude_skills: Vec::new(),
+            gemini_dir: false,
+        };
+        // Exercises plural "agents" path
+        print_scan_results(&scan);
+    }
+
+    #[test]
+    fn print_scan_results_multiple_skills() {
+        let scan = ScanResult {
+            claude_md: None,
+            claude_md_lines: 0,
+            gemini_md: None,
+            gemini_md_lines: 0,
+            agents_md: None,
+            claude_settings: false,
+            claude_settings_value: None,
+            mcp_json: false,
+            mcp_servers: BTreeMap::new(),
+            claude_agents: Vec::new(),
+            claude_skills: vec!["skill-a".to_string(), "skill-b".to_string()],
+            gemini_dir: false,
+        };
+        // Exercises plural "skills" path
+        print_scan_results(&scan);
+    }
+
+    #[test]
+    fn print_scan_results_gemini_md_only() {
+        let scan = ScanResult {
+            claude_md: None,
+            claude_md_lines: 0,
+            gemini_md: Some(PathBuf::from("GEMINI.md")),
+            gemini_md_lines: 15,
+            agents_md: None,
+            claude_settings: false,
+            claude_settings_value: None,
+            mcp_json: false,
+            mcp_servers: BTreeMap::new(),
+            claude_agents: Vec::new(),
+            claude_skills: Vec::new(),
+            gemini_dir: false,
+        };
+        // Exercises gemini_md path without gemini_dir
+        print_scan_results(&scan);
+    }
+
+    #[test]
+    fn print_scan_results_agents_md_only() {
+        let scan = ScanResult {
+            claude_md: None,
+            claude_md_lines: 0,
+            gemini_md: None,
+            gemini_md_lines: 0,
+            agents_md: Some(PathBuf::from("AGENTS.md")),
+            claude_settings: false,
+            claude_settings_value: None,
+            mcp_json: false,
+            mcp_servers: BTreeMap::new(),
+            claude_agents: Vec::new(),
+            claude_skills: Vec::new(),
+            gemini_dir: false,
+        };
+        // Exercises agents_md path
+        print_scan_results(&scan);
+    }
+
+    // -----------------------------------------------------------------------
+    // parse_mcp_json: mcpServers key with non-object values
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_mcp_json_non_object_mcp_servers() {
+        let dir = TempDir::new().unwrap();
+        let mcp = r#"{ "mcpServers": "not an object" }"#;
+        fs::write(dir.path().join(".mcp.json"), mcp).unwrap();
+        let servers = parse_mcp_json(&dir.path().join(".mcp.json"));
+        // Falls through to json.as_object() fallback, but that's also not server entries
+        // mcpServers is not an object, and the top-level object has mcpServers as a string
+        // so fallback to top-level as_object gives {"mcpServers": ...}
+        // which would try to parse "mcpServers" as a server name
+        // This exercises the fallback path
+        assert!(servers.len() <= 1);
+    }
+
+    #[test]
+    fn parse_mcp_json_array_value() {
+        let dir = TempDir::new().unwrap();
+        let mcp = r#"[1, 2, 3]"#;
+        fs::write(dir.path().join(".mcp.json"), mcp).unwrap();
+        let servers = parse_mcp_json(&dir.path().join(".mcp.json"));
+        // Not an object at all
+        assert!(servers.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // scan_project: edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn scan_project_multiple_agents_sorted() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join(".claude/agents")).unwrap();
+        fs::write(dir.path().join(".claude/agents/z-agent.md"), "").unwrap();
+        fs::write(dir.path().join(".claude/agents/a-agent.md"), "").unwrap();
+        fs::write(dir.path().join(".claude/agents/m-agent.md"), "").unwrap();
+        let scan = scan_project(dir.path());
+        assert_eq!(scan.claude_agents, vec!["a-agent", "m-agent", "z-agent"]);
+    }
+
+    #[test]
+    fn scan_project_multiple_skills_sorted() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join(".claude/skills/z-skill")).unwrap();
+        fs::create_dir_all(dir.path().join(".claude/skills/a-skill")).unwrap();
+        fs::create_dir_all(dir.path().join(".claude/skills/m-skill")).unwrap();
+        let scan = scan_project(dir.path());
+        assert_eq!(scan.claude_skills, vec!["a-skill", "m-skill", "z-skill"]);
+    }
+
+    // -----------------------------------------------------------------------
+    // split_claude_md: more keyword patterns
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn split_claude_md_mention_keyword() {
+        let content = "\
+# Collaboration
+
+Use @mention to tag other agents.
+";
+        let (_base, overlay) = split_claude_md(content);
+        assert!(overlay.contains("@mention"));
+    }
+
+    #[test]
+    fn split_claude_md_todoread_keyword() {
+        let content = "\
+# Tasks
+
+Use TodoRead to check progress.
+";
+        let (_base, overlay) = split_claude_md(content);
+        assert!(overlay.contains("TodoRead"));
+    }
+
+    #[test]
+    fn split_claude_md_login_logout_keywords() {
+        let content = "\
+# Auth
+
+Use /login and /logout to manage sessions.
+
+# Build
+
+npm run build
+";
+        let (base, overlay) = split_claude_md(content);
+        assert!(overlay.contains("/login"));
+        assert!(base.contains("npm run build"));
+    }
+
+    // -----------------------------------------------------------------------
+    // has_detections: more combinations
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn scan_result_has_detections_gemini_dir_only() {
+        let scan = ScanResult {
+            claude_md: None,
+            claude_md_lines: 0,
+            gemini_md: None,
+            gemini_md_lines: 0,
+            agents_md: None,
+            claude_settings: false,
+            claude_settings_value: None,
+            mcp_json: false,
+            mcp_servers: BTreeMap::new(),
+            claude_agents: Vec::new(),
+            claude_skills: Vec::new(),
+            gemini_dir: true,
+        };
+        assert!(scan.has_detections());
+    }
+
+    #[test]
+    fn scan_result_has_detections_claude_settings_only() {
+        let scan = ScanResult {
+            claude_md: None,
+            claude_md_lines: 0,
+            gemini_md: None,
+            gemini_md_lines: 0,
+            agents_md: None,
+            claude_settings: true,
+            claude_settings_value: None,
+            mcp_json: false,
+            mcp_servers: BTreeMap::new(),
+            claude_agents: Vec::new(),
+            claude_skills: Vec::new(),
+            gemini_dir: false,
+        };
+        assert!(scan.has_detections());
+    }
+
+    #[test]
+    fn scan_result_has_detections_mcp_json_only() {
+        let scan = ScanResult {
+            claude_md: None,
+            claude_md_lines: 0,
+            gemini_md: None,
+            gemini_md_lines: 0,
+            agents_md: None,
+            claude_settings: false,
+            claude_settings_value: None,
+            mcp_json: true,
+            mcp_servers: BTreeMap::new(),
+            claude_agents: Vec::new(),
+            claude_skills: Vec::new(),
+            gemini_dir: false,
+        };
+        assert!(scan.has_detections());
+    }
+
+    #[test]
+    fn scan_result_has_detections_claude_skills_only() {
+        let scan = ScanResult {
+            claude_md: None,
+            claude_md_lines: 0,
+            gemini_md: None,
+            gemini_md_lines: 0,
+            agents_md: None,
+            claude_settings: false,
+            claude_settings_value: None,
+            mcp_json: false,
+            mcp_servers: BTreeMap::new(),
+            claude_agents: Vec::new(),
+            claude_skills: vec!["s".to_string()],
+            gemini_dir: false,
+        };
+        assert!(scan.has_detections());
+    }
+
+    // -----------------------------------------------------------------------
+    // gitignore edge case: agents_md line already present
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn gitignore_agents_md_not_duplicated_when_in_backend_patterns() {
+        let dir = TempDir::new().unwrap();
+        // Write .gitignore that already has AGENTS.md
+        fs::write(dir.path().join(".gitignore"), "AGENTS.md\n").unwrap();
+        update_gitignore(dir.path(), &["claude-code"], true).unwrap();
+        let content = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
+        let count = content.matches("AGENTS.md").count();
+        assert_eq!(count, 1, "AGENTS.md should not be duplicated");
+    }
 }

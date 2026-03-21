@@ -249,7 +249,9 @@ pub fn expand_git_url(url: &str) -> String {
 mod tests {
     use super::*;
     use agx::lockfile::types::LockedSource;
-    use agx::manifest::types::AgentEnvironment;
+    use agx::manifest::types::{
+        AgentDependency, AgentEnvironment, PluginDependency, SkillDependency,
+    };
 
     /// Test that `run_lock` produces a valid lockfile for a manifest with only
     /// local dependencies (no network access required).
@@ -368,5 +370,679 @@ agents:
         for (_name, agent) in &lockfile.agents {
             assert!(matches!(agent.source, LockedSource::Local { .. }));
         }
+    }
+
+    // --- expand_git_url tests ---
+
+    /// Shorthand `owner/repo` should expand to full GitHub HTTPS URL.
+    #[test]
+    fn expand_git_url_shorthand() {
+        assert_eq!(
+            expand_git_url("anthropics/claude-plugins"),
+            "https://github.com/anthropics/claude-plugins.git"
+        );
+    }
+
+    /// Full HTTPS URL should pass through unchanged.
+    #[test]
+    fn expand_git_url_https_passthrough() {
+        let url = "https://github.com/anthropics/claude-plugins.git";
+        assert_eq!(expand_git_url(url), url);
+    }
+
+    /// SSH URL should pass through unchanged (contains `@`).
+    #[test]
+    fn expand_git_url_ssh_passthrough() {
+        let url = "git@github.com:anthropics/claude-plugins.git";
+        assert_eq!(expand_git_url(url), url);
+    }
+
+    /// URL with `.git` suffix and protocol should pass through.
+    #[test]
+    fn expand_git_url_git_protocol_passthrough() {
+        let url = "git://github.com/anthropics/claude-plugins.git";
+        assert_eq!(expand_git_url(url), url);
+    }
+
+    /// HTTP URL should pass through unchanged.
+    #[test]
+    fn expand_git_url_http_passthrough() {
+        let url = "http://example.com/repo.git";
+        assert_eq!(expand_git_url(url), url);
+    }
+
+    /// A path with multiple slashes should not be treated as shorthand.
+    #[test]
+    fn expand_git_url_deep_path_not_shorthand() {
+        let url = "org/sub/repo";
+        // Has 2 slashes, not exactly 1, so passes through
+        assert_eq!(expand_git_url(url), url);
+    }
+
+    /// A single word with no slashes should not be treated as shorthand.
+    #[test]
+    fn expand_git_url_no_slash_passthrough() {
+        let url = "just-a-name";
+        assert_eq!(expand_git_url(url), url);
+    }
+
+    // --- build_resolve_context tests ---
+
+    /// `build_resolve_context` with a local-only manifest should return empty context.
+    #[test]
+    fn build_resolve_context_local_only() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        // Point the cache at a temp dir so we don't pollute real cache
+        unsafe { std::env::set_var("AGX_CACHE_DIR", tmp.path()) };
+
+        let manifest: AgentEnvironment = serde_yaml::from_str(
+            r#"
+name: local-ctx-test
+backends:
+  claude-code: {}
+skills:
+  my-skill:
+    path: ./skills/my-skill
+agents:
+  my-agent:
+    path: ./agents/my-agent.md
+"#,
+        )
+        .unwrap();
+
+        let ctx = build_resolve_context(&manifest).unwrap();
+        assert!(ctx.registry_versions.is_empty());
+        assert!(ctx.git_commits.is_empty());
+
+        unsafe { std::env::remove_var("AGX_CACHE_DIR") };
+    }
+
+    /// `build_resolve_context` with an empty manifest returns empty context.
+    #[test]
+    fn build_resolve_context_empty_manifest() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("AGX_CACHE_DIR", tmp.path()) };
+
+        let manifest: AgentEnvironment = serde_yaml::from_str(
+            "name: empty\nbackends:\n  claude-code: {}\n",
+        )
+        .unwrap();
+
+        let ctx = build_resolve_context(&manifest).unwrap();
+        assert!(ctx.registry_versions.is_empty());
+        assert!(ctx.git_commits.is_empty());
+
+        unsafe { std::env::remove_var("AGX_CACHE_DIR") };
+    }
+
+    /// `build_resolve_context` with git deps pointing to a local bare repo.
+    #[test]
+    fn build_resolve_context_with_git_deps() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let cache_dir = tmp.path().join("cache");
+        unsafe { std::env::set_var("AGX_CACHE_DIR", &cache_dir) };
+
+        // Create a bare repo with a commit
+        let work_dir = tmp.path().join("work");
+        let bare_dir = tmp.path().join("bare.git");
+        std::fs::create_dir_all(&work_dir).unwrap();
+
+        // Initialize a normal repo, add a commit, then clone --bare
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(&work_dir)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["-c", "user.name=Test", "-c", "user.email=test@test.com", "commit", "--allow-empty", "-m", "init"])
+            .current_dir(&work_dir)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["clone", "--bare"])
+            .arg(&work_dir)
+            .arg(&bare_dir)
+            .output()
+            .unwrap();
+
+        // Use the bare repo path as a file:// URL for a git dep
+        let repo_url = format!("file://{}", bare_dir.display());
+
+        let mut manifest: AgentEnvironment = serde_yaml::from_str(
+            "name: git-test\nbackends:\n  claude-code: {}\n",
+        )
+        .unwrap();
+
+        manifest.skills.insert(
+            "remote-skill".to_string(),
+            SkillDependency {
+                git: Some(repo_url.clone()),
+                path: "skills/remote".to_string(),
+                tag: None,
+                branch: None,
+                commit: None,
+            },
+        );
+
+        let ctx = build_resolve_context(&manifest).unwrap();
+        // Should have resolved a git commit
+        assert!(!ctx.git_commits.is_empty());
+        // Should have an entry for the URL
+        assert!(ctx.git_commits.contains_key(&repo_url));
+        // The resolved commit should be a 40-char hex SHA
+        let sha = &ctx.git_commits[&repo_url];
+        assert_eq!(sha.len(), 40);
+        assert!(sha.chars().all(|c| c.is_ascii_hexdigit()));
+
+        unsafe { std::env::remove_var("AGX_CACHE_DIR") };
+    }
+
+    /// Dedup logic: duplicate git URLs should only clone once and produce the same SHA.
+    #[test]
+    fn build_resolve_context_dedup_git_urls() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let cache_dir = tmp.path().join("cache");
+        unsafe { std::env::set_var("AGX_CACHE_DIR", &cache_dir) };
+
+        // Create a bare repo with a commit
+        let work_dir = tmp.path().join("work");
+        let bare_dir = tmp.path().join("bare.git");
+        std::fs::create_dir_all(&work_dir).unwrap();
+
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(&work_dir)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["-c", "user.name=Test", "-c", "user.email=test@test.com", "commit", "--allow-empty", "-m", "init"])
+            .current_dir(&work_dir)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["clone", "--bare"])
+            .arg(&work_dir)
+            .arg(&bare_dir)
+            .output()
+            .unwrap();
+
+        let repo_url = format!("file://{}", bare_dir.display());
+
+        // Manifest with two deps pointing to the same git URL
+        let mut manifest: AgentEnvironment = serde_yaml::from_str(
+            "name: dedup-test\nbackends:\n  claude-code: {}\n",
+        )
+        .unwrap();
+
+        manifest.skills.insert(
+            "skill-a".to_string(),
+            SkillDependency {
+                git: Some(repo_url.clone()),
+                path: "skills/a".to_string(),
+                tag: None,
+                branch: None,
+                commit: None,
+            },
+        );
+
+        manifest.skills.insert(
+            "skill-b".to_string(),
+            SkillDependency {
+                git: Some(repo_url.clone()),
+                path: "skills/b".to_string(),
+                tag: None,
+                branch: None,
+                commit: None,
+            },
+        );
+
+        manifest.agents.insert(
+            "agent-c".to_string(),
+            AgentDependency {
+                git: Some(repo_url.clone()),
+                path: "agents/c.md".to_string(),
+                tag: None,
+                branch: None,
+                commit: None,
+                model: None,
+                parameters: BTreeMap::new(),
+            },
+        );
+
+        let ctx = build_resolve_context(&manifest).unwrap();
+        // Despite 3 deps using the same URL, there should be only one clone
+        // and the SHA should be consistent
+        assert!(ctx.git_commits.contains_key(&repo_url));
+        let sha = &ctx.git_commits[&repo_url];
+        assert_eq!(sha.len(), 40);
+
+        // Check that the compound key also exists (url#HEAD)
+        let head_key = format!("{}#HEAD", &repo_url);
+        assert!(ctx.git_commits.contains_key(&head_key));
+        assert_eq!(&ctx.git_commits[&head_key], sha);
+
+        unsafe { std::env::remove_var("AGX_CACHE_DIR") };
+    }
+
+    /// `build_resolve_context` with git dep using a tag ref.
+    #[test]
+    fn build_resolve_context_git_with_tag() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let cache_dir = tmp.path().join("cache");
+        unsafe { std::env::set_var("AGX_CACHE_DIR", &cache_dir) };
+
+        // Create a repo with a tag
+        let work_dir = tmp.path().join("work");
+        let bare_dir = tmp.path().join("bare.git");
+        std::fs::create_dir_all(&work_dir).unwrap();
+
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(&work_dir)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["-c", "user.name=Test", "-c", "user.email=test@test.com", "commit", "--allow-empty", "-m", "init"])
+            .current_dir(&work_dir)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["tag", "v1.0.0"])
+            .current_dir(&work_dir)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["clone", "--bare"])
+            .arg(&work_dir)
+            .arg(&bare_dir)
+            .output()
+            .unwrap();
+
+        let repo_url = format!("file://{}", bare_dir.display());
+
+        let mut manifest: AgentEnvironment = serde_yaml::from_str(
+            "name: tag-test\nbackends:\n  claude-code: {}\n",
+        )
+        .unwrap();
+
+        manifest.skills.insert(
+            "tagged-skill".to_string(),
+            SkillDependency {
+                git: Some(repo_url.clone()),
+                path: "skills/tagged".to_string(),
+                tag: Some("v1.0.0".to_string()),
+                branch: None,
+                commit: None,
+            },
+        );
+
+        let ctx = build_resolve_context(&manifest).unwrap();
+        // Should have a compound key with the tag
+        let tag_key = format!("{}#v1.0.0", &repo_url);
+        assert!(ctx.git_commits.contains_key(&tag_key));
+        let sha = &ctx.git_commits[&tag_key];
+        assert_eq!(sha.len(), 40);
+
+        unsafe { std::env::remove_var("AGX_CACHE_DIR") };
+    }
+
+    /// `build_resolve_context` with git dep using a branch ref.
+    #[test]
+    fn build_resolve_context_git_with_branch() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let cache_dir = tmp.path().join("cache");
+        unsafe { std::env::set_var("AGX_CACHE_DIR", &cache_dir) };
+
+        let work_dir = tmp.path().join("work");
+        let bare_dir = tmp.path().join("bare.git");
+        std::fs::create_dir_all(&work_dir).unwrap();
+
+        std::process::Command::new("git")
+            .args(["init", "-b", "main"])
+            .current_dir(&work_dir)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["-c", "user.name=Test", "-c", "user.email=test@test.com", "commit", "--allow-empty", "-m", "init"])
+            .current_dir(&work_dir)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["clone", "--bare"])
+            .arg(&work_dir)
+            .arg(&bare_dir)
+            .output()
+            .unwrap();
+
+        let repo_url = format!("file://{}", bare_dir.display());
+
+        let mut manifest: AgentEnvironment = serde_yaml::from_str(
+            "name: branch-test\nbackends:\n  claude-code: {}\n",
+        )
+        .unwrap();
+
+        manifest.agents.insert(
+            "branch-agent".to_string(),
+            AgentDependency {
+                git: Some(repo_url.clone()),
+                path: "agents/branch.md".to_string(),
+                tag: None,
+                branch: Some("main".to_string()),
+                commit: None,
+                model: None,
+                parameters: BTreeMap::new(),
+            },
+        );
+
+        let ctx = build_resolve_context(&manifest).unwrap();
+        let branch_key = format!("{}#main", &repo_url);
+        assert!(ctx.git_commits.contains_key(&branch_key));
+        let sha = &ctx.git_commits[&branch_key];
+        assert_eq!(sha.len(), 40);
+
+        unsafe { std::env::remove_var("AGX_CACHE_DIR") };
+    }
+
+    /// `build_resolve_context` with plugin git deps.
+    #[test]
+    fn build_resolve_context_plugin_git_dep() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let cache_dir = tmp.path().join("cache");
+        unsafe { std::env::set_var("AGX_CACHE_DIR", &cache_dir) };
+
+        let work_dir = tmp.path().join("work");
+        let bare_dir = tmp.path().join("bare.git");
+        std::fs::create_dir_all(&work_dir).unwrap();
+
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(&work_dir)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["-c", "user.name=Test", "-c", "user.email=test@test.com", "commit", "--allow-empty", "-m", "init"])
+            .current_dir(&work_dir)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["clone", "--bare"])
+            .arg(&work_dir)
+            .arg(&bare_dir)
+            .output()
+            .unwrap();
+
+        let repo_url = format!("file://{}", bare_dir.display());
+
+        let mut manifest: AgentEnvironment = serde_yaml::from_str(
+            "name: plugin-git-test\nbackends:\n  claude-code: {}\n",
+        )
+        .unwrap();
+
+        manifest.plugins.insert(
+            "my-plugin".to_string(),
+            PluginDependency {
+                registry: None,
+                version: None,
+                git: Some(repo_url.clone()),
+                tag: Some("v1.0.0".to_string()),
+                branch: None,
+                commit: None,
+                include: None,
+                exclude: None,
+            },
+        );
+
+        // The tag doesn't exist in the bare repo, so this should error
+        // when trying to resolve the ref. But the clone should succeed.
+        // Actually, let's create the tag first.
+        std::process::Command::new("git")
+            .args(["tag", "v1.0.0"])
+            .current_dir(&work_dir)
+            .output()
+            .unwrap();
+        // Re-clone the bare repo with the tag
+        std::fs::remove_dir_all(&bare_dir).unwrap();
+        std::process::Command::new("git")
+            .args(["clone", "--bare"])
+            .arg(&work_dir)
+            .arg(&bare_dir)
+            .output()
+            .unwrap();
+
+        let ctx = build_resolve_context(&manifest).unwrap();
+        let key = format!("{}#v1.0.0", &repo_url);
+        assert!(ctx.git_commits.contains_key(&key));
+
+        unsafe { std::env::remove_var("AGX_CACHE_DIR") };
+    }
+
+    /// Test offline mode error for uncached git repos.
+    #[test]
+    fn build_resolve_context_offline_git_error() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let cache_dir = tmp.path().join("cache");
+        unsafe { std::env::set_var("AGX_CACHE_DIR", &cache_dir) };
+        unsafe { std::env::set_var("AGX_OFFLINE", "1") };
+
+        let mut manifest: AgentEnvironment = serde_yaml::from_str(
+            "name: offline-git-test\nbackends:\n  claude-code: {}\n",
+        )
+        .unwrap();
+
+        manifest.skills.insert(
+            "remote-skill".to_string(),
+            SkillDependency {
+                git: Some("https://github.com/nonexistent/repo.git".to_string()),
+                path: "skills/remote".to_string(),
+                tag: None,
+                branch: None,
+                commit: None,
+            },
+        );
+
+        let result = build_resolve_context(&manifest);
+        unsafe { std::env::remove_var("AGX_OFFLINE") };
+        unsafe { std::env::remove_var("AGX_CACHE_DIR") };
+
+        assert!(result.is_err());
+        let err_msg = format!("{:?}", result.as_ref().err().unwrap());
+        assert!(err_msg.contains("AGX_OFFLINE") || err_msg.contains("not cached"));
+    }
+
+    /// Test offline mode error for uncached registries.
+    #[test]
+    fn build_resolve_context_offline_registry_error() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let cache_dir = tmp.path().join("cache");
+        unsafe { std::env::set_var("AGX_CACHE_DIR", &cache_dir) };
+        unsafe { std::env::set_var("AGX_OFFLINE", "1") };
+
+        let mut manifest: AgentEnvironment = serde_yaml::from_str(
+            "name: offline-reg-test\nbackends:\n  claude-code: {}\n",
+        )
+        .unwrap();
+
+        manifest.registries.insert(
+            "official".to_string(),
+            agx::manifest::types::RegistryConfig {
+                url: "https://registry.example.com/index.git".to_string(),
+                auth: None,
+                pin: None,
+            },
+        );
+
+        let result = build_resolve_context(&manifest);
+        unsafe { std::env::remove_var("AGX_OFFLINE") };
+        unsafe { std::env::remove_var("AGX_CACHE_DIR") };
+
+        assert!(result.is_err());
+        let err_msg = format!("{:?}", result.as_ref().err().unwrap());
+        assert!(err_msg.contains("AGX_OFFLINE") || err_msg.contains("not cached"));
+    }
+
+    /// Test that git dep that already exists in cache skips clone in offline mode.
+    #[test]
+    fn build_resolve_context_offline_cached_git_succeeds() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let cache_dir = tmp.path().join("cache");
+        unsafe { std::env::set_var("AGX_CACHE_DIR", &cache_dir) };
+
+        // First, create a bare repo and populate cache while online
+        let work_dir = tmp.path().join("work");
+        let bare_dir = tmp.path().join("bare.git");
+        std::fs::create_dir_all(&work_dir).unwrap();
+
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(&work_dir)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["-c", "user.name=Test", "-c", "user.email=test@test.com", "commit", "--allow-empty", "-m", "init"])
+            .current_dir(&work_dir)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["clone", "--bare"])
+            .arg(&work_dir)
+            .arg(&bare_dir)
+            .output()
+            .unwrap();
+
+        let repo_url = format!("file://{}", bare_dir.display());
+
+        let mut manifest: AgentEnvironment = serde_yaml::from_str(
+            "name: offline-cached-test\nbackends:\n  claude-code: {}\n",
+        )
+        .unwrap();
+
+        manifest.skills.insert(
+            "cached-skill".to_string(),
+            SkillDependency {
+                git: Some(repo_url.clone()),
+                path: "skills/cached".to_string(),
+                tag: None,
+                branch: None,
+                commit: None,
+            },
+        );
+
+        // First build populates cache
+        let ctx = build_resolve_context(&manifest).unwrap();
+        assert!(!ctx.git_commits.is_empty());
+
+        // Now go offline — should succeed because repo is cached
+        unsafe { std::env::set_var("AGX_OFFLINE", "1") };
+        let ctx2 = build_resolve_context(&manifest).unwrap();
+        unsafe { std::env::remove_var("AGX_OFFLINE") };
+        unsafe { std::env::remove_var("AGX_CACHE_DIR") };
+
+        assert!(!ctx2.git_commits.is_empty());
+    }
+
+    /// Test run_lock with multiple local skills and agents.
+    #[test]
+    fn lock_multiple_local_skills() {
+        let manifest: AgentEnvironment = serde_yaml::from_str(
+            r#"
+name: multi-skill
+backends:
+  claude-code: {}
+skills:
+  skill-1:
+    path: ./skills/one
+  skill-2:
+    path: ./skills/two
+  skill-3:
+    path: ./skills/three
+"#,
+        )
+        .unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let lockfile = run_lock(&manifest, dir.path()).unwrap();
+        assert_eq!(lockfile.skills.len(), 3);
+        for name in &["skill-1", "skill-2", "skill-3"] {
+            assert!(lockfile.skills.contains_key(*name));
+            assert!(matches!(lockfile.skills[*name].source, LockedSource::Local { .. }));
+        }
+    }
+
+    /// Test expand_git_url with edge cases.
+    #[test]
+    fn expand_git_url_empty_string() {
+        assert_eq!(expand_git_url(""), "");
+    }
+
+    /// Test that tag ref takes precedence over branch ref in git deps.
+    #[test]
+    fn build_resolve_context_tag_over_branch() {
+        // When both tag and branch are set, tag should be used (tag is checked first
+        // in the `dep.tag.as_deref().or(dep.branch.as_deref())` chain)
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let cache_dir = tmp.path().join("cache");
+        unsafe { std::env::set_var("AGX_CACHE_DIR", &cache_dir) };
+
+        let work_dir = tmp.path().join("work");
+        let bare_dir = tmp.path().join("bare.git");
+        std::fs::create_dir_all(&work_dir).unwrap();
+
+        std::process::Command::new("git")
+            .args(["init", "-b", "main"])
+            .current_dir(&work_dir)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["-c", "user.name=Test", "-c", "user.email=test@test.com", "commit", "--allow-empty", "-m", "init"])
+            .current_dir(&work_dir)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["tag", "v2.0.0"])
+            .current_dir(&work_dir)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["clone", "--bare"])
+            .arg(&work_dir)
+            .arg(&bare_dir)
+            .output()
+            .unwrap();
+
+        let repo_url = format!("file://{}", bare_dir.display());
+
+        let mut manifest: AgentEnvironment = serde_yaml::from_str(
+            "name: precedence-test\nbackends:\n  claude-code: {}\n",
+        )
+        .unwrap();
+
+        manifest.skills.insert(
+            "prec-skill".to_string(),
+            SkillDependency {
+                git: Some(repo_url.clone()),
+                path: "skills/prec".to_string(),
+                tag: Some("v2.0.0".to_string()),
+                branch: Some("main".to_string()),
+                commit: None,
+            },
+        );
+
+        let ctx = build_resolve_context(&manifest).unwrap();
+        // The tag key should be used, not the branch key
+        let tag_key = format!("{}#v2.0.0", &repo_url);
+        assert!(ctx.git_commits.contains_key(&tag_key));
+
+        unsafe { std::env::remove_var("AGX_CACHE_DIR") };
     }
 }

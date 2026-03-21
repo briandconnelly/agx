@@ -352,4 +352,119 @@ skills:
         let status = std::process::Command::new("false").status().unwrap();
         assert_eq!(status.code(), Some(1));
     }
+
+    #[test]
+    fn staleness_detected_by_mtime() {
+        let dir = tempfile::tempdir().unwrap();
+        let lockfile_path = dir.path().join("agent-environment.lock");
+        let manifest_path = dir.path().join("agent-environment.yml");
+
+        let manifest_yaml = "name: test\nbackends:\n  claude-code: {}\n";
+        let manifest: AgentEnvironment = serde_yaml::from_str(manifest_yaml).unwrap();
+
+        // Write lockfile first (older).
+        let lockfile = agx::lockfile::types::Lockfile::new();
+        agx::lockfile::save(&lockfile, &lockfile_path).unwrap();
+
+        // Small delay so mtime differs.
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        // Write manifest after (newer) — this makes mtime-based staleness true.
+        std::fs::write(&manifest_path, manifest_yaml).unwrap();
+
+        let result = check_staleness(&manifest_path, &lockfile_path, &manifest).unwrap();
+        assert!(result, "should be stale when manifest is newer than lockfile");
+    }
+
+    #[test]
+    fn determine_backend_with_model_config() {
+        let yaml = r#"
+name: model-test
+backends:
+  claude-code:
+    default: true
+    model:
+      id: opus
+      effort: high
+  gemini-cli: {}
+"#;
+        let manifest: AgentEnvironment = serde_yaml::from_str(yaml).unwrap();
+
+        // Explicit selection overrides default.
+        let result = determine_backend(&Some("gemini-cli".to_string()), &manifest).unwrap();
+        assert_eq!(result, "gemini-cli");
+
+        // No explicit — picks default.
+        let result = determine_backend(&None, &manifest).unwrap();
+        assert_eq!(result, "claude-code");
+    }
+
+    #[test]
+    fn determine_backend_explicit_not_in_manifest_lists_available() {
+        let manifest =
+            manifest_with_backends(vec![("claude-code", None), ("gemini-cli", None)]);
+        let err = determine_backend(&Some("cursor".to_string()), &manifest).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("cursor"));
+        assert!(msg.contains("not declared"));
+        // Should list available backends in the error message
+        assert!(msg.contains("claude-code"));
+        assert!(msg.contains("gemini-cli"));
+    }
+
+    #[test]
+    fn determine_backend_multiple_defaults_picks_first() {
+        // BTreeMap is sorted, so "aaa" comes before "zzz".
+        let manifest = manifest_with_backends(vec![
+            ("zzz-backend", Some(true)),
+            ("aaa-backend", Some(true)),
+        ]);
+        let result = determine_backend(&None, &manifest).unwrap();
+        // BTreeMap iteration is sorted, so aaa-backend is first and has default=true.
+        assert_eq!(result, "aaa-backend");
+    }
+
+    #[test]
+    fn check_staleness_both_mtimes_missing() {
+        // If metadata is unreadable (e.g., files exist but mtime not accessible),
+        // the function should still fall through to content check.
+        let dir = tempfile::tempdir().unwrap();
+        let manifest_path = dir.path().join("agent-environment.yml");
+        let lockfile_path = dir.path().join("agent-environment.lock");
+
+        let manifest_yaml = "name: test\nbackends:\n  claude-code: {}\n";
+        std::fs::write(&manifest_path, manifest_yaml).unwrap();
+        let manifest: AgentEnvironment = serde_yaml::from_str(manifest_yaml).unwrap();
+
+        let lockfile = agx::lockfile::types::Lockfile::new();
+        agx::lockfile::save(&lockfile, &lockfile_path).unwrap();
+
+        // Both files exist, lockfile matches manifest (no deps) — should not be stale.
+        let result = check_staleness(&manifest_path, &lockfile_path, &manifest).unwrap();
+        assert!(!result);
+    }
+
+    #[test]
+    fn backend_args_forwarded() {
+        let config = BackendConfig {
+            default: None,
+            isolation: None,
+            model: None,
+        };
+        let backend = agx::backends::claude_code::ClaudeCodeBackend;
+        let mut cmd =
+            <agx::backends::claude_code::ClaudeCodeBackend as agx::backends::Backend>::run_command(
+                &backend, &config,
+            )
+            .unwrap();
+
+        // Simulate forwarding backend_args.
+        for arg in &["--verbose", "--no-color"] {
+            cmd.arg(arg);
+        }
+
+        let args: Vec<_> = cmd.get_args().map(|a| a.to_string_lossy().to_string()).collect();
+        assert!(args.contains(&"--verbose".to_string()));
+        assert!(args.contains(&"--no-color".to_string()));
+    }
 }

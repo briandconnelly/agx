@@ -147,4 +147,125 @@ backends:
         let env: AgentEnvironment = serde_yaml::from_str(yaml).unwrap();
         assert!(env.backends.is_empty());
     }
+
+    #[test]
+    fn run_without_manifest_succeeds() {
+        // The `run` function should succeed even when there is no manifest
+        // in the current directory — it always prints built-in backends.
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        let old_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        let result = run(BackendsArgs {});
+        std::env::set_current_dir(&old_cwd).unwrap();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn run_with_manifest_containing_backends() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        let manifest_path = dir.path().join("agent-environment.yml");
+        std::fs::write(
+            &manifest_path,
+            r#"
+name: test-run
+backends:
+  claude-code:
+    default: true
+    isolation: strict
+  gemini-cli:
+    isolation: permissive
+"#,
+        )
+        .unwrap();
+
+        let old_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+        let result = run(BackendsArgs {});
+        std::env::set_current_dir(&old_cwd).unwrap();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn run_with_manifest_empty_backends() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        let manifest_path = dir.path().join("agent-environment.yml");
+        std::fs::write(&manifest_path, "name: empty-be\nbackends: {}\n").unwrap();
+
+        let old_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+        let result = run(BackendsArgs {});
+        std::env::set_current_dir(&old_cwd).unwrap();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn builtin_backend_descriptions_are_nonempty() {
+        for (name, desc) in BUILTIN_BACKENDS {
+            assert!(!name.is_empty(), "backend name should not be empty");
+            assert!(!desc.is_empty(), "backend description should not be empty");
+        }
+    }
+
+    #[test]
+    fn manifest_backend_default_none_uses_strict_display() {
+        // When default is None and isolation is None, the display code
+        // defaults to Strict for the isolation string.
+        let config = BackendConfig {
+            default: None,
+            isolation: None,
+            model: None,
+        };
+        let isolation = config
+            .isolation
+            .as_ref()
+            .unwrap_or(&IsolationMode::Strict);
+        assert_eq!(isolation_str(isolation), "strict");
+    }
+
+    #[test]
+    fn manifest_backend_default_true_annotation() {
+        let config = BackendConfig {
+            default: Some(true),
+            isolation: Some(IsolationMode::Permissive),
+            model: None,
+        };
+        let mut annotations = Vec::new();
+        if config.default == Some(true) {
+            annotations.push("default".to_string());
+        }
+        let isolation = config
+            .isolation
+            .as_ref()
+            .unwrap_or(&IsolationMode::Strict);
+        annotations.push(isolation_str(isolation).to_string());
+
+        assert_eq!(annotations, vec!["default", "permissive"]);
+        let suffix = format!(" ({})", annotations.join(", "));
+        assert_eq!(suffix, " (default, permissive)");
+    }
+
+    #[test]
+    fn manifest_backend_no_default_annotation() {
+        let config = BackendConfig {
+            default: None,
+            isolation: Some(IsolationMode::Strict),
+            model: None,
+        };
+        let mut annotations = Vec::new();
+        if config.default == Some(true) {
+            annotations.push("default".to_string());
+        }
+        let isolation = config
+            .isolation
+            .as_ref()
+            .unwrap_or(&IsolationMode::Strict);
+        annotations.push(isolation_str(isolation).to_string());
+
+        // No "default" annotation; just "strict"
+        assert_eq!(annotations, vec!["strict"]);
+    }
 }

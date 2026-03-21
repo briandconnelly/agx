@@ -413,4 +413,263 @@ plugins:
         assert_eq!(entries[0].name, "quality-review");
         assert_eq!(entries[1].name, "test-runner");
     }
+
+    // -----------------------------------------------------------------------
+    // print_table coverage
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn print_table_single_entry() {
+        let entries = vec![OutdatedEntry {
+            name: "my-plugin".to_string(),
+            current: "1.0.0".to_string(),
+            wanted: "1.5.0".to_string(),
+            latest: "2.0.0".to_string(),
+        }];
+        // Exercise print_table for coverage.
+        print_table(&entries);
+    }
+
+    #[test]
+    fn print_table_multiple_entries() {
+        let entries = vec![
+            OutdatedEntry {
+                name: "short".to_string(),
+                current: "0.1.0".to_string(),
+                wanted: "0.2.0".to_string(),
+                latest: "1.0.0".to_string(),
+            },
+            OutdatedEntry {
+                name: "a-very-long-plugin-name".to_string(),
+                current: "10.20.30".to_string(),
+                wanted: "10.20.30".to_string(),
+                latest: "11.0.0".to_string(),
+            },
+        ];
+        print_table(&entries);
+    }
+
+    #[test]
+    fn print_table_wanted_equals_current() {
+        let entries = vec![OutdatedEntry {
+            name: "only-latest-newer".to_string(),
+            current: "1.0.0".to_string(),
+            wanted: "1.0.0".to_string(),
+            latest: "2.0.0".to_string(),
+        }];
+        // This exercises the dim styling path for wanted.
+        print_table(&entries);
+    }
+
+    #[test]
+    fn print_table_latest_equals_current() {
+        let entries = vec![OutdatedEntry {
+            name: "only-wanted-newer".to_string(),
+            current: "1.0.0".to_string(),
+            wanted: "1.5.0".to_string(),
+            latest: "1.0.0".to_string(),
+        }];
+        // This exercises the dim styling path for latest.
+        print_table(&entries);
+    }
+
+    // -----------------------------------------------------------------------
+    // find_outdated edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn find_outdated_wanted_equals_current_but_latest_greater() {
+        // Plugin where wanted == current (constraint is tight) but latest > current.
+        let manifest: AgentEnvironment = serde_yaml::from_str(
+            r#"
+name: test
+backends:
+  claude-code: {}
+registries:
+  official:
+    url: https://example.com
+plugins:
+  quality-review:
+    registry: official
+    version: ">=1.5.0, <1.6.0"
+"#,
+        )
+        .unwrap();
+
+        let mut lockfile = Lockfile::new();
+        lockfile.plugins.insert(
+            "quality-review".to_string(),
+            LockedPlugin {
+                source: LockedSource::Registry {
+                    registry: "official".to_string(),
+                    path: None,
+                    resolved_version: "1.5.0".to_string(),
+                },
+                git_commit: None,
+                integrity: None,
+            },
+        );
+
+        let mut indexes = BTreeMap::new();
+        indexes.insert("official".to_string(), sample_index());
+
+        let entries = find_outdated(&manifest, &lockfile, &indexes);
+        // wanted is 1.5.0 (matches constraint), latest is 2.1.0 > 1.5.0 => should show
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].current, "1.5.0");
+        assert_eq!(entries[0].wanted, "1.5.0");
+        assert_eq!(entries[0].latest, "2.1.0");
+    }
+
+    #[test]
+    fn find_outdated_invalid_semver_in_lockfile() {
+        let manifest = sample_manifest();
+        let mut lockfile = Lockfile::new();
+        lockfile.plugins.insert(
+            "quality-review".to_string(),
+            LockedPlugin {
+                source: LockedSource::Registry {
+                    registry: "official".to_string(),
+                    path: None,
+                    resolved_version: "not-semver".to_string(),
+                },
+                git_commit: None,
+                integrity: None,
+            },
+        );
+
+        let mut indexes = BTreeMap::new();
+        indexes.insert("official".to_string(), sample_index());
+
+        // Invalid semver should be skipped gracefully.
+        let entries = find_outdated(&manifest, &lockfile, &indexes);
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn find_outdated_missing_registry_in_indexes() {
+        let manifest = sample_manifest();
+        let mut lockfile = Lockfile::new();
+        lockfile.plugins.insert(
+            "quality-review".to_string(),
+            LockedPlugin {
+                source: LockedSource::Registry {
+                    registry: "official".to_string(),
+                    path: None,
+                    resolved_version: "1.0.0".to_string(),
+                },
+                git_commit: None,
+                integrity: None,
+            },
+        );
+
+        // No indexes at all — should skip gracefully.
+        let indexes = BTreeMap::new();
+        let entries = find_outdated(&manifest, &lockfile, &indexes);
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn find_outdated_empty_lockfile() {
+        let manifest = sample_manifest();
+        let lockfile = Lockfile::new();
+        let mut indexes = BTreeMap::new();
+        indexes.insert("official".to_string(), sample_index());
+
+        let entries = find_outdated(&manifest, &lockfile, &indexes);
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn find_outdated_empty_indexes() {
+        let manifest = sample_manifest();
+        let mut lockfile = Lockfile::new();
+        lockfile.plugins.insert(
+            "quality-review".to_string(),
+            LockedPlugin {
+                source: LockedSource::Registry {
+                    registry: "official".to_string(),
+                    path: None,
+                    resolved_version: "1.0.0".to_string(),
+                },
+                git_commit: None,
+                integrity: None,
+            },
+        );
+
+        let indexes = BTreeMap::new();
+        let entries = find_outdated(&manifest, &lockfile, &indexes);
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn find_outdated_plugin_not_in_index() {
+        let manifest = sample_manifest();
+        let mut lockfile = Lockfile::new();
+        lockfile.plugins.insert(
+            "unknown-plugin".to_string(),
+            LockedPlugin {
+                source: LockedSource::Registry {
+                    registry: "official".to_string(),
+                    path: None,
+                    resolved_version: "1.0.0".to_string(),
+                },
+                git_commit: None,
+                integrity: None,
+            },
+        );
+
+        let mut indexes = BTreeMap::new();
+        indexes.insert("official".to_string(), sample_index());
+
+        // Plugin not in index => skipped.
+        let entries = find_outdated(&manifest, &lockfile, &indexes);
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn find_outdated_local_source_skipped() {
+        let manifest = sample_manifest();
+        let mut lockfile = Lockfile::new();
+        lockfile.plugins.insert(
+            "local-plugin".to_string(),
+            LockedPlugin {
+                source: LockedSource::Local {
+                    local: "./plugins/local".to_string(),
+                },
+                git_commit: None,
+                integrity: None,
+            },
+        );
+
+        let mut indexes = BTreeMap::new();
+        indexes.insert("official".to_string(), sample_index());
+
+        let entries = find_outdated(&manifest, &lockfile, &indexes);
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn find_outdated_npm_source_skipped() {
+        let manifest = sample_manifest();
+        let mut lockfile = Lockfile::new();
+        lockfile.plugins.insert(
+            "npm-plugin".to_string(),
+            LockedPlugin {
+                source: LockedSource::Npm {
+                    package: "@scope/npm-plugin".to_string(),
+                    resolved_version: Some("1.0.0".to_string()),
+                    npm_registry: None,
+                },
+                git_commit: None,
+                integrity: None,
+            },
+        );
+
+        let mut indexes = BTreeMap::new();
+        indexes.insert("official".to_string(), sample_index());
+
+        let entries = find_outdated(&manifest, &lockfile, &indexes);
+        assert!(entries.is_empty());
+    }
 }

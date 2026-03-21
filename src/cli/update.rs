@@ -377,4 +377,316 @@ mod tests {
         // Should have: +added, -removed, ~kept (version change)
         assert_eq!(changes.len(), 3);
     }
+
+    // -----------------------------------------------------------------------
+    // HasVersion::version_display tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn version_display_registry() {
+        let entry = LockedEntry {
+            source: LockedSource::Registry {
+                registry: "official".to_string(),
+                resolved_version: "1.2.3".to_string(),
+                path: None,
+            },
+            git_commit: None,
+            integrity: None,
+        };
+        assert_eq!(entry.version_display(), "1.2.3");
+    }
+
+    #[test]
+    fn version_display_registry_with_path() {
+        let entry = LockedEntry {
+            source: LockedSource::Registry {
+                registry: "official".to_string(),
+                resolved_version: "2.0.0".to_string(),
+                path: Some("plugins/foo".to_string()),
+            },
+            git_commit: None,
+            integrity: None,
+        };
+        assert_eq!(entry.version_display(), "2.0.0");
+    }
+
+    #[test]
+    fn version_display_git_with_commit() {
+        let entry = LockedEntry {
+            source: LockedSource::Git {
+                git: "https://github.com/someone/repo.git".to_string(),
+                path: None,
+            },
+            git_commit: Some("abcdef1234567890abcdef".to_string()),
+            integrity: None,
+        };
+        let display = entry.version_display();
+        assert!(display.contains("https://github.com/someone/repo.git"));
+        assert!(display.contains("#abcdef1"));
+    }
+
+    #[test]
+    fn version_display_git_without_commit() {
+        let entry = LockedEntry {
+            source: LockedSource::Git {
+                git: "https://github.com/someone/repo.git".to_string(),
+                path: None,
+            },
+            git_commit: None,
+            integrity: None,
+        };
+        assert_eq!(
+            entry.version_display(),
+            "https://github.com/someone/repo.git"
+        );
+    }
+
+    #[test]
+    fn version_display_git_with_short_commit() {
+        let entry = LockedEntry {
+            source: LockedSource::Git {
+                git: "https://github.com/repo.git".to_string(),
+                path: Some("sub".to_string()),
+            },
+            git_commit: Some("abc".to_string()),
+            integrity: None,
+        };
+        let display = entry.version_display();
+        assert!(display.contains("#abc"));
+    }
+
+    #[test]
+    fn version_display_npm_with_resolved_version() {
+        let entry = LockedEntry {
+            source: LockedSource::Npm {
+                package: "@scope/my-plugin".to_string(),
+                resolved_version: Some("3.1.0".to_string()),
+                npm_registry: None,
+            },
+            git_commit: None,
+            integrity: None,
+        };
+        assert_eq!(entry.version_display(), "@scope/my-plugin@3.1.0");
+    }
+
+    #[test]
+    fn version_display_npm_without_resolved_version() {
+        let entry = LockedEntry {
+            source: LockedSource::Npm {
+                package: "simple-pkg".to_string(),
+                resolved_version: None,
+                npm_registry: None,
+            },
+            git_commit: None,
+            integrity: None,
+        };
+        assert_eq!(entry.version_display(), "simple-pkg");
+    }
+
+    #[test]
+    fn version_display_local() {
+        let entry = LockedEntry {
+            source: LockedSource::Local {
+                local: "./my/local/path".to_string(),
+            },
+            git_commit: None,
+            integrity: None,
+        };
+        assert_eq!(entry.version_display(), "./my/local/path");
+    }
+
+    // -----------------------------------------------------------------------
+    // diff_map with skills and agents
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn diff_detects_added_skill() {
+        let old = Lockfile::new();
+        let mut new = Lockfile::new();
+        new.skills.insert(
+            "new-skill".to_string(),
+            LockedEntry {
+                source: LockedSource::Local {
+                    local: "./skills/new".to_string(),
+                },
+                git_commit: None,
+                integrity: None,
+            },
+        );
+
+        let mut changes = Vec::new();
+        diff_map("skill", &old.skills, &new.skills, &mut changes);
+        assert_eq!(changes.len(), 1);
+        let plain = console::strip_ansi_codes(&changes[0]);
+        assert!(plain.contains("new-skill"));
+        assert!(plain.contains("+"));
+    }
+
+    #[test]
+    fn diff_detects_removed_agent() {
+        let mut old = Lockfile::new();
+        old.agents.insert(
+            "old-agent".to_string(),
+            LockedEntry {
+                source: LockedSource::Local {
+                    local: "./agents/old.md".to_string(),
+                },
+                git_commit: None,
+                integrity: None,
+            },
+        );
+        let new = Lockfile::new();
+
+        let mut changes = Vec::new();
+        diff_map("agent", &old.agents, &new.agents, &mut changes);
+        assert_eq!(changes.len(), 1);
+        let plain = console::strip_ansi_codes(&changes[0]);
+        assert!(plain.contains("old-agent"));
+        assert!(plain.contains("-"));
+    }
+
+    #[test]
+    fn diff_empty_maps() {
+        let old: BTreeMap<String, LockedEntry> = BTreeMap::new();
+        let new: BTreeMap<String, LockedEntry> = BTreeMap::new();
+        let mut changes = Vec::new();
+        diff_map("plugin", &old, &new, &mut changes);
+        assert!(changes.is_empty());
+    }
+
+    #[test]
+    fn diff_all_same() {
+        let mut old = Lockfile::new();
+        let entry = LockedEntry {
+            source: LockedSource::Local {
+                local: "./skills/same".to_string(),
+            },
+            git_commit: None,
+            integrity: None,
+        };
+        old.skills.insert("same-skill".to_string(), entry.clone());
+        let new = old.clone();
+
+        let mut changes = Vec::new();
+        diff_map("skill", &old.skills, &new.skills, &mut changes);
+        assert!(changes.is_empty());
+    }
+
+    #[test]
+    fn diff_agent_version_change() {
+        let mut old = Lockfile::new();
+        old.agents.insert(
+            "my-agent".to_string(),
+            LockedEntry {
+                source: LockedSource::Git {
+                    git: "https://github.com/someone/agents.git".to_string(),
+                    path: None,
+                },
+                git_commit: Some("aaaa1111".to_string()),
+                integrity: None,
+            },
+        );
+        let mut new = Lockfile::new();
+        new.agents.insert(
+            "my-agent".to_string(),
+            LockedEntry {
+                source: LockedSource::Git {
+                    git: "https://github.com/someone/agents.git".to_string(),
+                    path: None,
+                },
+                git_commit: Some("bbbb2222".to_string()),
+                integrity: None,
+            },
+        );
+
+        let mut changes = Vec::new();
+        diff_map("agent", &old.agents, &new.agents, &mut changes);
+        assert_eq!(changes.len(), 1);
+        let plain = console::strip_ansi_codes(&changes[0]);
+        assert!(plain.contains("my-agent"));
+        assert!(plain.contains("~"));
+    }
+
+    // -----------------------------------------------------------------------
+    // print_diff coverage
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn print_diff_no_changes() {
+        let old = Lockfile::new();
+        let new = Lockfile::new();
+        // Exercise print_diff for coverage — just call it.
+        print_diff(&old, &new);
+    }
+
+    #[test]
+    fn print_diff_with_changes() {
+        let old = Lockfile::new();
+        let mut new = Lockfile::new();
+        new.plugins.insert(
+            "added-plugin".to_string(),
+            LockedEntry {
+                source: LockedSource::Registry {
+                    registry: "r".to_string(),
+                    path: None,
+                    resolved_version: "1.0.0".to_string(),
+                },
+                git_commit: None,
+                integrity: None,
+            },
+        );
+        // Exercise print_diff for coverage — just call it.
+        print_diff(&old, &new);
+    }
+
+    #[test]
+    fn print_diff_with_all_change_types() {
+        let mut old = Lockfile::new();
+        old.plugins.insert(
+            "removed-p".to_string(),
+            LockedEntry {
+                source: LockedSource::Registry {
+                    registry: "r".to_string(),
+                    path: None,
+                    resolved_version: "1.0.0".to_string(),
+                },
+                git_commit: None,
+                integrity: None,
+            },
+        );
+        old.skills.insert(
+            "changed-s".to_string(),
+            LockedEntry {
+                source: LockedSource::Local {
+                    local: "./old".to_string(),
+                },
+                git_commit: None,
+                integrity: None,
+            },
+        );
+
+        let mut new = Lockfile::new();
+        new.agents.insert(
+            "added-a".to_string(),
+            LockedEntry {
+                source: LockedSource::Local {
+                    local: "./agents/new.md".to_string(),
+                },
+                git_commit: None,
+                integrity: None,
+            },
+        );
+        new.skills.insert(
+            "changed-s".to_string(),
+            LockedEntry {
+                source: LockedSource::Local {
+                    local: "./new".to_string(),
+                },
+                git_commit: None,
+                integrity: None,
+            },
+        );
+
+        print_diff(&old, &new);
+    }
 }

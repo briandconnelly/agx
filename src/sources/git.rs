@@ -8,10 +8,17 @@ use std::path::Path;
 use std::process::Command;
 
 /// Clone a git repository as a bare repo to a destination path.
+///
+/// Sets `current_dir` to the destination's parent so the command does not
+/// depend on the process working directory being valid.
 pub fn clone(url: &str, dest: &Path) -> Result<()> {
+    let parent = dest
+        .parent()
+        .context("destination path has no parent directory")?;
     let status = Command::new("git")
         .args(["clone", "--bare", url])
         .arg(dest)
+        .current_dir(parent)
         .status()
         .context("running git clone")?;
     if !status.success() {

@@ -367,3 +367,601 @@ pub fn yaml_to_json(yaml: &serde_yaml::Value) -> Value {
         serde_yaml::Value::Tagged(tagged) => yaml_to_json(&tagged.value),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    // ---- get_backend tests ----
+
+    #[test]
+    fn get_backend_known_names() {
+        for name in &["claude-code", "codex", "cursor", "gemini-cli", "generic", "windsurf"] {
+            assert!(get_backend(name).is_some(), "should find backend: {}", name);
+        }
+    }
+
+    #[test]
+    fn get_backend_unknown_name() {
+        assert!(get_backend("nonexistent").is_none());
+        assert!(get_backend("").is_none());
+    }
+
+    // ---- inject_agent_frontmatter tests ----
+
+    #[test]
+    fn inject_frontmatter_no_changes() {
+        let content = "# Hello World\n\nSome body text.";
+        let result = inject_agent_frontmatter(content, None, &BTreeMap::new());
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn inject_frontmatter_add_model_no_existing() {
+        let content = "# Agent\n\nDo something.";
+        let result = inject_agent_frontmatter(content, Some("opus"), &BTreeMap::new());
+        assert!(result.contains("model: opus"));
+        assert!(result.starts_with("---\n"));
+        assert!(result.contains("# Agent"));
+    }
+
+    #[test]
+    fn inject_frontmatter_add_model_with_existing() {
+        let content = "---\nmodel: sonnet\ntimeout: 30\n---\n# Agent\n\nDo something.";
+        let result = inject_agent_frontmatter(content, Some("opus"), &BTreeMap::new());
+        assert!(result.contains("model: opus"));
+        assert!(!result.contains("model: sonnet"));
+        assert!(result.contains("timeout: 30"));
+    }
+
+    #[test]
+    fn inject_frontmatter_add_params() {
+        let content = "# Agent\n\nBody.";
+        let mut params = BTreeMap::new();
+        params.insert("timeout".to_string(), serde_yaml::Value::Number(serde_yaml::Number::from(60)));
+        params.insert("verbose".to_string(), serde_yaml::Value::Bool(true));
+        let result = inject_agent_frontmatter(content, None, &params);
+        assert!(result.contains("timeout: 60"));
+        assert!(result.contains("verbose: true"));
+    }
+
+    #[test]
+    fn inject_frontmatter_override_existing_params() {
+        let content = "---\ntimeout: 10\nlevel: debug\n---\n# Agent";
+        let mut params = BTreeMap::new();
+        params.insert("timeout".to_string(), serde_yaml::Value::String("30".to_string()));
+        let result = inject_agent_frontmatter(content, None, &params);
+        assert!(result.contains("timeout: 30"));
+        assert!(result.contains("level: debug"));
+        // Should not have duplicate timeout
+        assert_eq!(result.matches("timeout").count(), 1);
+    }
+
+    #[test]
+    fn inject_frontmatter_model_and_params() {
+        let content = "---\nold: value\n---\n# Agent";
+        let mut params = BTreeMap::new();
+        params.insert("key".to_string(), serde_yaml::Value::String("val".to_string()));
+        let result = inject_agent_frontmatter(content, Some("opus"), &params);
+        assert!(result.contains("model: opus"));
+        assert!(result.contains("key: val"));
+        assert!(result.contains("old: value"));
+    }
+
+    // ---- parse_frontmatter tests ----
+
+    #[test]
+    fn parse_frontmatter_no_frontmatter() {
+        let content = "# Hello\n\nBody text.";
+        let (fm, body) = parse_frontmatter(content);
+        assert!(fm.is_none());
+        assert_eq!(body, content);
+    }
+
+    #[test]
+    fn parse_frontmatter_valid() {
+        let content = "---\nmodel: opus\n---\n# Agent\n\nBody.";
+        let (fm, body) = parse_frontmatter(content);
+        assert_eq!(fm.unwrap(), "model: opus");
+        assert_eq!(body, "# Agent\n\nBody.");
+    }
+
+    #[test]
+    fn parse_frontmatter_malformed_no_closing() {
+        let content = "---\nmodel: opus\n# Agent\n\nBody.";
+        let (fm, body) = parse_frontmatter(content);
+        assert!(fm.is_none());
+        assert_eq!(body, content);
+    }
+
+    // ---- resolve_env_vars tests ----
+
+    #[test]
+    fn resolve_env_vars_no_vars() {
+        let result = resolve_env_vars("hello world");
+        assert_eq!(result, "hello world");
+    }
+
+    #[test]
+    fn resolve_env_vars_with_var() {
+        unsafe { std::env::set_var("AGX_TEST_VAR_RESOLVE", "replaced"); }
+        let result = resolve_env_vars("prefix-${AGX_TEST_VAR_RESOLVE}-suffix");
+        assert_eq!(result, "prefix-replaced-suffix");
+        unsafe { std::env::remove_var("AGX_TEST_VAR_RESOLVE"); }
+    }
+
+    #[test]
+    fn resolve_env_vars_missing_var() {
+        unsafe { std::env::remove_var("AGX_NONEXISTENT_VAR_12345"); }
+        let result = resolve_env_vars("value=${AGX_NONEXISTENT_VAR_12345}!");
+        assert_eq!(result, "value=!");
+    }
+
+    #[test]
+    fn resolve_env_vars_multiple_vars() {
+        unsafe { std::env::set_var("AGX_TEST_A", "aaa"); }
+        unsafe { std::env::set_var("AGX_TEST_B", "bbb"); }
+        let result = resolve_env_vars("${AGX_TEST_A}+${AGX_TEST_B}");
+        assert_eq!(result, "aaa+bbb");
+        unsafe { std::env::remove_var("AGX_TEST_A"); }
+        unsafe { std::env::remove_var("AGX_TEST_B"); }
+    }
+
+    #[test]
+    fn resolve_env_vars_dollar_without_brace() {
+        let result = resolve_env_vars("$hello ${HOME}");
+        // $hello should be left as-is (no brace), ${HOME} resolved
+        assert!(result.starts_with("$hello "));
+    }
+
+    // ---- copy_dir_recursive tests ----
+
+    #[test]
+    fn copy_dir_recursive_basic() {
+        let src_dir = tempfile::tempdir().unwrap();
+        let dst_dir = tempfile::tempdir().unwrap();
+        let dst = dst_dir.path().join("copied");
+
+        fs::write(src_dir.path().join("file1.txt"), "hello").unwrap();
+        fs::create_dir_all(src_dir.path().join("sub")).unwrap();
+        fs::write(src_dir.path().join("sub/file2.txt"), "world").unwrap();
+
+        copy_dir_recursive(src_dir.path(), &dst).unwrap();
+
+        assert!(dst.join("file1.txt").exists());
+        assert_eq!(fs::read_to_string(dst.join("file1.txt")).unwrap(), "hello");
+        assert!(dst.join("sub/file2.txt").exists());
+        assert_eq!(fs::read_to_string(dst.join("sub/file2.txt")).unwrap(), "world");
+    }
+
+    #[test]
+    fn copy_dir_recursive_replaces_existing() {
+        let src_dir = tempfile::tempdir().unwrap();
+        let dst_dir = tempfile::tempdir().unwrap();
+        let dst = dst_dir.path().join("dest");
+
+        // Create initial destination
+        fs::create_dir_all(&dst).unwrap();
+        fs::write(dst.join("old.txt"), "old data").unwrap();
+
+        // Create source
+        fs::write(src_dir.path().join("new.txt"), "new data").unwrap();
+
+        copy_dir_recursive(src_dir.path(), &dst).unwrap();
+
+        assert!(!dst.join("old.txt").exists());
+        assert!(dst.join("new.txt").exists());
+    }
+
+    // ---- generate_agents_md tests ----
+
+    #[test]
+    fn generate_agents_md_no_context() {
+        let dir = tempfile::tempdir().unwrap();
+        generate_agents_md(None, dir.path()).unwrap();
+
+        let content = fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
+        assert!(content.contains(GENERATED_MARKER));
+        assert!(content.contains("No context section defined"));
+    }
+
+    #[test]
+    fn generate_agents_md_with_base_file() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("CONTEXT.md"), "# My Project\n\nProject instructions here.\n").unwrap();
+
+        let ctx = ContextConfig {
+            base: "CONTEXT.md".to_string(),
+            overlays: BTreeMap::new(),
+            children: Vec::new(),
+        };
+        generate_agents_md(Some(&ctx), dir.path()).unwrap();
+
+        let content = fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
+        assert!(content.contains(GENERATED_MARKER));
+        assert!(content.contains("# My Project"));
+        assert!(content.contains("Project instructions here."));
+    }
+
+    #[test]
+    fn generate_agents_md_missing_base_file() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let ctx = ContextConfig {
+            base: "nonexistent.md".to_string(),
+            overlays: BTreeMap::new(),
+            children: Vec::new(),
+        };
+        generate_agents_md(Some(&ctx), dir.path()).unwrap();
+
+        let content = fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
+        assert!(content.contains(GENERATED_MARKER));
+        assert!(content.contains("not found"));
+    }
+
+    // ---- copy_skills tests ----
+
+    #[test]
+    fn copy_skills_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let skills: BTreeMap<String, SkillDependency> = BTreeMap::new();
+        let result = copy_skills(&skills, dir.path(), dir.path(), &dir.path().join("target"));
+        assert!(result.is_ok());
+        assert!(!dir.path().join("target").exists());
+    }
+
+    #[test]
+    fn copy_skills_local_skill() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Create a local skill directory with SKILL.md
+        let skill_src = dir.path().join("skills/my-skill");
+        fs::create_dir_all(&skill_src).unwrap();
+        fs::write(skill_src.join("SKILL.md"), "# My Skill\n\nInstructions.").unwrap();
+        fs::write(skill_src.join("helper.sh"), "#!/bin/bash\necho hi").unwrap();
+
+        let mut skills = BTreeMap::new();
+        skills.insert(
+            "my-skill".to_string(),
+            SkillDependency {
+                git: None,
+                path: "./skills/my-skill".to_string(),
+                tag: None,
+                branch: None,
+                commit: None,
+            },
+        );
+
+        let target = dir.path().join("output/skills");
+        copy_skills(&skills, dir.path(), dir.path(), &target).unwrap();
+
+        assert!(target.join("my-skill/SKILL.md").exists());
+        let content = fs::read_to_string(target.join("my-skill/SKILL.md")).unwrap();
+        assert!(content.starts_with("<!-- AUTO-GENERATED BY agx."));
+        assert!(content.contains("local"));
+        assert!(content.contains("# My Skill"));
+
+        assert!(target.join("my-skill/helper.sh").exists());
+    }
+
+    #[test]
+    fn copy_skills_local_skill_no_skill_md() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Create a local skill directory without SKILL.md
+        let skill_src = dir.path().join("skills/no-md-skill");
+        fs::create_dir_all(&skill_src).unwrap();
+        fs::write(skill_src.join("script.py"), "print('hello')").unwrap();
+
+        let mut skills = BTreeMap::new();
+        skills.insert(
+            "no-md-skill".to_string(),
+            SkillDependency {
+                git: None,
+                path: "./skills/no-md-skill".to_string(),
+                tag: None,
+                branch: None,
+                commit: None,
+            },
+        );
+
+        let target = dir.path().join("output/skills");
+        copy_skills(&skills, dir.path(), dir.path(), &target).unwrap();
+
+        assert!(target.join("no-md-skill/script.py").exists());
+        assert!(!target.join("no-md-skill/SKILL.md").exists());
+    }
+
+    #[test]
+    fn copy_skills_cached_skill() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().join("cache");
+
+        // Create a cached skill
+        let cached_skill = cache_dir.join("skills/cached-skill");
+        fs::create_dir_all(&cached_skill).unwrap();
+        fs::write(cached_skill.join("SKILL.md"), "# Cached Skill\n\nRemote instructions.").unwrap();
+
+        let mut skills = BTreeMap::new();
+        skills.insert(
+            "cached-skill".to_string(),
+            SkillDependency {
+                git: Some("https://github.com/someone/skills.git".to_string()),
+                path: "skills/cached-skill".to_string(),
+                tag: Some("v1.0.0".to_string()),
+                branch: None,
+                commit: None,
+            },
+        );
+
+        let target = dir.path().join("output/skills");
+        copy_skills(&skills, &cache_dir, dir.path(), &target).unwrap();
+
+        assert!(target.join("cached-skill/SKILL.md").exists());
+        let content = fs::read_to_string(target.join("cached-skill/SKILL.md")).unwrap();
+        assert!(content.contains("cached cached-skill"));
+    }
+
+    #[test]
+    fn copy_skills_marker_not_duplicated() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Create a skill with SKILL.md that already has the marker
+        let skill_src = dir.path().join("skills/pre-marked");
+        fs::create_dir_all(&skill_src).unwrap();
+        fs::write(
+            skill_src.join("SKILL.md"),
+            "<!-- AUTO-GENERATED BY agx. Source: local pre-marked -->\n# Already Marked",
+        )
+        .unwrap();
+
+        let mut skills = BTreeMap::new();
+        skills.insert(
+            "pre-marked".to_string(),
+            SkillDependency {
+                git: None,
+                path: "./skills/pre-marked".to_string(),
+                tag: None,
+                branch: None,
+                commit: None,
+            },
+        );
+
+        let target = dir.path().join("output/skills");
+        copy_skills(&skills, dir.path(), dir.path(), &target).unwrap();
+
+        let content = fs::read_to_string(target.join("pre-marked/SKILL.md")).unwrap();
+        // Marker should appear exactly once
+        assert_eq!(content.matches("AUTO-GENERATED BY agx").count(), 1);
+    }
+
+    // ---- copy_agents tests ----
+
+    #[test]
+    fn copy_agents_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let agents: BTreeMap<String, AgentDependency> = BTreeMap::new();
+        let result = copy_agents(&agents, dir.path(), dir.path(), &dir.path().join("target"));
+        assert!(result.is_ok());
+        assert!(!dir.path().join("target").exists());
+    }
+
+    #[test]
+    fn copy_agents_local_agent() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Create a local agent file
+        fs::create_dir_all(dir.path().join("agents")).unwrap();
+        fs::write(
+            dir.path().join("agents/my-helper.md"),
+            "# My Helper\n\nDo helpful things.",
+        )
+        .unwrap();
+
+        let mut agents = BTreeMap::new();
+        agents.insert(
+            "my-helper".to_string(),
+            AgentDependency {
+                git: None,
+                path: "./agents/my-helper.md".to_string(),
+                tag: None,
+                branch: None,
+                commit: None,
+                model: Some("opus".to_string()),
+                parameters: Default::default(),
+            },
+        );
+
+        let target = dir.path().join("output/agents");
+        copy_agents(&agents, dir.path(), dir.path(), &target).unwrap();
+
+        assert!(target.join("my-helper.md").exists());
+        let content = fs::read_to_string(target.join("my-helper.md")).unwrap();
+        assert!(content.contains("AUTO-GENERATED BY agx"));
+        assert!(content.contains("model: opus"));
+        assert!(content.contains("# My Helper"));
+    }
+
+    #[test]
+    fn copy_agents_cached_agent() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().join("cache");
+
+        // Create a cached agent
+        fs::create_dir_all(cache_dir.join("agents")).unwrap();
+        fs::write(
+            cache_dir.join("agents/remote-agent.md"),
+            "# Remote Agent\n\nRemote instructions.",
+        )
+        .unwrap();
+
+        let mut agents = BTreeMap::new();
+        agents.insert(
+            "remote-agent".to_string(),
+            AgentDependency {
+                git: Some("https://github.com/someone/agents.git".to_string()),
+                path: "agents/helper.md".to_string(),
+                tag: Some("v2.0.0".to_string()),
+                branch: None,
+                commit: None,
+                model: None,
+                parameters: Default::default(),
+            },
+        );
+
+        let target = dir.path().join("output/agents");
+        copy_agents(&agents, &cache_dir, dir.path(), &target).unwrap();
+
+        // With non-.md path ending, should use name.md
+        assert!(target.join("helper.md").exists());
+        let content = fs::read_to_string(target.join("helper.md")).unwrap();
+        assert!(content.contains("AUTO-GENERATED BY agx"));
+        assert!(content.contains("cached remote-agent"));
+    }
+
+    #[test]
+    fn copy_agents_with_parameters() {
+        let dir = tempfile::tempdir().unwrap();
+
+        fs::create_dir_all(dir.path().join("agents")).unwrap();
+        fs::write(
+            dir.path().join("agents/param-agent.md"),
+            "# Param Agent\n\nBody.",
+        )
+        .unwrap();
+
+        let mut params = BTreeMap::new();
+        params.insert("timeout".to_string(), serde_yaml::Value::Number(serde_yaml::Number::from(60)));
+
+        let mut agents = BTreeMap::new();
+        agents.insert(
+            "param-agent".to_string(),
+            AgentDependency {
+                git: None,
+                path: "./agents/param-agent.md".to_string(),
+                tag: None,
+                branch: None,
+                commit: None,
+                model: Some("sonnet".to_string()),
+                parameters: params,
+            },
+        );
+
+        let target = dir.path().join("output/agents");
+        copy_agents(&agents, dir.path(), dir.path(), &target).unwrap();
+
+        let content = fs::read_to_string(target.join("param-agent.md")).unwrap();
+        assert!(content.contains("model: sonnet"));
+        assert!(content.contains("timeout: 60"));
+    }
+
+    #[test]
+    fn copy_agents_non_md_path() {
+        let dir = tempfile::tempdir().unwrap();
+
+        fs::create_dir_all(dir.path().join("agents")).unwrap();
+        fs::write(
+            dir.path().join("agents/no-ext-agent"),
+            "# No Extension Agent\n\nBody.",
+        )
+        .unwrap();
+
+        let mut agents = BTreeMap::new();
+        agents.insert(
+            "no-ext-agent".to_string(),
+            AgentDependency {
+                git: None,
+                path: "./agents/no-ext-agent".to_string(),
+                tag: None,
+                branch: None,
+                commit: None,
+                model: None,
+                parameters: Default::default(),
+            },
+        );
+
+        let target = dir.path().join("output/agents");
+        copy_agents(&agents, dir.path(), dir.path(), &target).unwrap();
+
+        // Path doesn't end with .md, so output should be name.md
+        assert!(target.join("no-ext-agent.md").exists());
+    }
+
+    // ---- yaml_to_json tests ----
+
+    #[test]
+    fn yaml_to_json_null() {
+        let result = yaml_to_json(&serde_yaml::Value::Null);
+        assert_eq!(result, Value::Null);
+    }
+
+    #[test]
+    fn yaml_to_json_bool() {
+        assert_eq!(yaml_to_json(&serde_yaml::Value::Bool(true)), json!(true));
+        assert_eq!(yaml_to_json(&serde_yaml::Value::Bool(false)), json!(false));
+    }
+
+    #[test]
+    fn yaml_to_json_integer() {
+        let n = serde_yaml::Value::Number(serde_yaml::Number::from(42));
+        assert_eq!(yaml_to_json(&n), json!(42));
+    }
+
+    #[test]
+    fn yaml_to_json_float() {
+        let n: serde_yaml::Value = serde_yaml::from_str("3.14").unwrap();
+        let result = yaml_to_json(&n);
+        assert!(result.as_f64().is_some());
+    }
+
+    #[test]
+    fn yaml_to_json_string() {
+        let s = serde_yaml::Value::String("hello".to_string());
+        assert_eq!(yaml_to_json(&s), json!("hello"));
+    }
+
+    #[test]
+    fn yaml_to_json_sequence() {
+        let seq: serde_yaml::Value = serde_yaml::from_str("[1, 2, 3]").unwrap();
+        let result = yaml_to_json(&seq);
+        assert_eq!(result, json!([1, 2, 3]));
+    }
+
+    #[test]
+    fn yaml_to_json_mapping() {
+        let map: serde_yaml::Value = serde_yaml::from_str("key: value\nnum: 42").unwrap();
+        let result = yaml_to_json(&map);
+        assert_eq!(result["key"], json!("value"));
+        assert_eq!(result["num"], json!(42));
+    }
+
+    #[test]
+    fn yaml_to_json_nested() {
+        let nested: serde_yaml::Value = serde_yaml::from_str(
+            "outer:\n  inner: [1, true, null]\n  name: test",
+        )
+        .unwrap();
+        let result = yaml_to_json(&nested);
+        assert_eq!(result["outer"]["inner"], json!([1, true, null]));
+        assert_eq!(result["outer"]["name"], json!("test"));
+    }
+
+    #[test]
+    fn yaml_to_json_mapping_with_non_string_keys() {
+        // Create a mapping with an integer key
+        let yaml: serde_yaml::Value = serde_yaml::from_str("42: value").unwrap();
+        let result = yaml_to_json(&yaml);
+        assert!(result.is_object());
+        // The key 42 should be converted to string
+        assert!(result.as_object().unwrap().contains_key("42"));
+    }
+
+    // ---- GENERATED_MARKER test ----
+
+    #[test]
+    fn generated_marker_is_consistent() {
+        assert!(GENERATED_MARKER.contains("agx"));
+        assert!(GENERATED_MARKER.contains("DO NOT EDIT"));
+    }
+}

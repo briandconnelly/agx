@@ -32,6 +32,7 @@ use clap::{Parser, Subcommand};
 ///
 /// Encapsulates the boilerplate of finding the manifest, loading it,
 /// determining the project root, and optionally loading the lockfile.
+#[derive(Debug)]
 pub struct ProjectContext {
     /// The parsed agent-environment manifest.
     pub manifest: agx::manifest::types::AgentEnvironment,
@@ -50,11 +51,19 @@ impl ProjectContext {
     /// loads the lockfile if it exists alongside the manifest.
     pub fn load() -> anyhow::Result<Self> {
         let cwd = std::env::current_dir().context("getting current directory")?;
-        let manifest_path = agx::config::find_manifest(&cwd).ok_or_else(|| {
+        Self::load_from(&cwd)
+    }
+
+    /// Load the project context starting from a given directory.
+    ///
+    /// Searches `start_dir` and its ancestors for the manifest file,
+    /// then loads the manifest and optional lockfile.
+    pub fn load_from(start_dir: &std::path::Path) -> anyhow::Result<Self> {
+        let manifest_path = agx::config::find_manifest(start_dir).ok_or_else(|| {
             anyhow::anyhow!(
                 "no {} found in {} or parent directories",
                 agx::config::MANIFEST_FILE,
-                cwd.display()
+                start_dir.display()
             )
         })?;
         let project_root = manifest_path
@@ -74,6 +83,195 @@ impl ProjectContext {
             project_root,
             lockfile,
         })
+    }
+}
+
+/// Global lock shared by all CLI tests that mutate process-wide state
+/// (environment variables like `AGX_CACHE_DIR`, working directory via
+/// `std::env::set_current_dir`, etc.).  Every test in *any* `cli::*` module
+/// that touches these must acquire this lock first.
+#[cfg(test)]
+pub(crate) static PROCESS_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn load_from_valid_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest_path = dir.path().join("agent-environment.yml");
+        std::fs::write(
+            &manifest_path,
+            "name: test-ctx\nbackends:\n  claude-code: {}\n",
+        )
+        .unwrap();
+
+        let ctx = ProjectContext::load_from(dir.path()).unwrap();
+        assert_eq!(ctx.manifest.name, "test-ctx");
+        assert_eq!(ctx.manifest_path, manifest_path);
+        assert_eq!(ctx.project_root, dir.path());
+        assert!(ctx.lockfile.is_none());
+    }
+
+    #[test]
+    fn load_from_no_manifest_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = ProjectContext::load_from(dir.path());
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("no agent-environment.yml"),
+            "expected manifest-not-found error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn load_from_subdirectory_finds_parent_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest_path = dir.path().join("agent-environment.yml");
+        std::fs::write(
+            &manifest_path,
+            "name: parent-project\nbackends:\n  claude-code: {}\n",
+        )
+        .unwrap();
+        let sub = dir.path().join("src").join("deep");
+        std::fs::create_dir_all(&sub).unwrap();
+
+        let ctx = ProjectContext::load_from(&sub).unwrap();
+        assert_eq!(ctx.manifest.name, "parent-project");
+        assert_eq!(ctx.project_root, dir.path());
+    }
+
+    #[test]
+    fn load_from_with_lockfile_present() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest_path = dir.path().join("agent-environment.yml");
+        std::fs::write(
+            &manifest_path,
+            "name: with-lock\nbackends:\n  claude-code: {}\n",
+        )
+        .unwrap();
+
+        // Create a valid lockfile alongside the manifest.
+        let lockfile = agx::lockfile::types::Lockfile::new();
+        agx::lockfile::save(&lockfile, &dir.path().join("agent-environment.lock")).unwrap();
+
+        let ctx = ProjectContext::load_from(dir.path()).unwrap();
+        assert_eq!(ctx.manifest.name, "with-lock");
+        assert!(ctx.lockfile.is_some());
+        let lock = ctx.lockfile.unwrap();
+        assert_eq!(lock.lockfile_version, 1);
+    }
+
+    #[test]
+    fn load_from_invalid_manifest_yaml_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest_path = dir.path().join("agent-environment.yml");
+        std::fs::write(&manifest_path, "{{{{invalid yaml!!!!").unwrap();
+
+        let result = ProjectContext::load_from(dir.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn load_from_manifest_missing_required_field_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest_path = dir.path().join("agent-environment.yml");
+        // Missing the required 'name' field
+        std::fs::write(&manifest_path, "backends:\n  claude-code: {}\n").unwrap();
+
+        let result = ProjectContext::load_from(dir.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn load_from_manifest_path_is_absolute() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest_path = dir.path().join("agent-environment.yml");
+        std::fs::write(
+            &manifest_path,
+            "name: abs-test\nbackends:\n  claude-code: {}\n",
+        )
+        .unwrap();
+
+        let ctx = ProjectContext::load_from(dir.path()).unwrap();
+        assert!(ctx.manifest_path.is_absolute());
+    }
+
+    #[test]
+    fn load_from_project_root_equals_manifest_parent() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest_path = dir.path().join("agent-environment.yml");
+        std::fs::write(
+            &manifest_path,
+            "name: root-test\nbackends:\n  claude-code: {}\n",
+        )
+        .unwrap();
+
+        let ctx = ProjectContext::load_from(dir.path()).unwrap();
+        assert_eq!(
+            ctx.project_root,
+            ctx.manifest_path.parent().unwrap()
+        );
+    }
+
+    #[test]
+    fn load_from_with_lockfile_containing_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest_path = dir.path().join("agent-environment.yml");
+        std::fs::write(
+            &manifest_path,
+            "name: lock-entries\nbackends:\n  claude-code: {}\nplugins:\n  my-plugin:\n    registry: official\n    version: \"^1\"\n",
+        )
+        .unwrap();
+
+        // Create a lockfile with a plugin entry.
+        let mut lockfile = agx::lockfile::types::Lockfile::new();
+        lockfile.plugins.insert(
+            "my-plugin".to_string(),
+            agx::lockfile::types::LockedEntry {
+                source: agx::lockfile::types::LockedSource::Registry {
+                    registry: "official".to_string(),
+                    resolved_version: "1.5.0".to_string(),
+                    path: None,
+                },
+                git_commit: None,
+                integrity: None,
+            },
+        );
+        agx::lockfile::save(&lockfile, &dir.path().join("agent-environment.lock")).unwrap();
+
+        let ctx = ProjectContext::load_from(dir.path()).unwrap();
+        assert!(ctx.lockfile.is_some());
+        let lock = ctx.lockfile.unwrap();
+        assert!(lock.plugins.contains_key("my-plugin"));
+        let plugin = &lock.plugins["my-plugin"];
+        match &plugin.source {
+            agx::lockfile::types::LockedSource::Registry { resolved_version, .. } => {
+                assert_eq!(resolved_version, "1.5.0");
+            }
+            other => panic!("expected Registry source, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn load_from_corrupt_lockfile_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest_path = dir.path().join("agent-environment.yml");
+        std::fs::write(
+            &manifest_path,
+            "name: corrupt-lock\nbackends:\n  claude-code: {}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("agent-environment.lock"),
+            "{{{{not valid yaml!!!!",
+        )
+        .unwrap();
+
+        let result = ProjectContext::load_from(dir.path());
+        assert!(result.is_err());
     }
 }
 

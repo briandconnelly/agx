@@ -908,4 +908,1321 @@ mod tests {
         assert_eq!(dot_node_id("mcp", "my.server"), "mcp_my_server");
         assert_eq!(dot_node_id("skill", "foo bar"), "skill_foo_bar");
     }
+
+    // -----------------------------------------------------------------------
+    // format_locked_info tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn format_locked_info_registry_without_commit() {
+        let source = lockfile::types::LockedSource::Registry {
+            registry: "official".to_string(),
+            resolved_version: "1.2.3".to_string(),
+            path: None,
+        };
+        let result = format_locked_info(&source, None);
+        assert_eq!(result, "[resolved: 1.2.3]");
+    }
+
+    #[test]
+    fn format_locked_info_registry_with_path_and_commit() {
+        let source = lockfile::types::LockedSource::Registry {
+            registry: "official".to_string(),
+            resolved_version: "2.0.0".to_string(),
+            path: Some("plugins/foo".to_string()),
+        };
+        let result = format_locked_info(&source, Some("abcdef1234567890"));
+        assert_eq!(result, "[resolved: 2.0.0, #abcdef12]");
+    }
+
+    #[test]
+    fn format_locked_info_git_without_commit() {
+        let source = lockfile::types::LockedSource::Git {
+            git: "https://github.com/someone/repo.git".to_string(),
+            path: None,
+        };
+        let result = format_locked_info(&source, None);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn format_locked_info_git_with_commit() {
+        let source = lockfile::types::LockedSource::Git {
+            git: "https://github.com/someone/repo.git".to_string(),
+            path: Some("subdir".to_string()),
+        };
+        let result = format_locked_info(&source, Some("1234567890abcdef"));
+        assert_eq!(result, "[#12345678]");
+    }
+
+    #[test]
+    fn format_locked_info_git_with_short_commit() {
+        let source = lockfile::types::LockedSource::Git {
+            git: "https://github.com/someone/repo.git".to_string(),
+            path: None,
+        };
+        let result = format_locked_info(&source, Some("abc"));
+        assert_eq!(result, "[#abc]");
+    }
+
+    #[test]
+    fn format_locked_info_npm_with_resolved_version() {
+        let source = lockfile::types::LockedSource::Npm {
+            package: "@scope/my-plugin".to_string(),
+            resolved_version: Some("3.1.0".to_string()),
+            npm_registry: None,
+        };
+        let result = format_locked_info(&source, None);
+        assert_eq!(result, "[npm: @scope/my-plugin]");
+    }
+
+    #[test]
+    fn format_locked_info_npm_without_resolved_version() {
+        let source = lockfile::types::LockedSource::Npm {
+            package: "simple-pkg".to_string(),
+            resolved_version: None,
+            npm_registry: None,
+        };
+        let result = format_locked_info(&source, None);
+        assert_eq!(result, "[npm: simple-pkg]");
+    }
+
+    #[test]
+    fn format_locked_info_npm_with_commit() {
+        let source = lockfile::types::LockedSource::Npm {
+            package: "pkg".to_string(),
+            resolved_version: Some("1.0.0".to_string()),
+            npm_registry: Some("https://registry.npmjs.org".to_string()),
+        };
+        let result = format_locked_info(&source, Some("deadbeef12345678"));
+        assert_eq!(result, "[npm: pkg, #deadbeef]");
+    }
+
+    #[test]
+    fn format_locked_info_local() {
+        let source = lockfile::types::LockedSource::Local {
+            local: "./my/local/path".to_string(),
+        };
+        let result = format_locked_info(&source, None);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn format_locked_info_local_with_commit() {
+        let source = lockfile::types::LockedSource::Local {
+            local: "./local".to_string(),
+        };
+        let result = format_locked_info(&source, Some("abcdef1234567890"));
+        assert_eq!(result, "[#abcdef12]");
+    }
+
+    // -----------------------------------------------------------------------
+    // More build_tree_string tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn tree_output_mcp_with_command_and_args() {
+        let mut env = minimal_manifest();
+        env.mcp_servers.insert(
+            "my-mcp".to_string(),
+            McpServerConfig {
+                url: None,
+                command: Some("npx".to_string()),
+                args: vec!["@scope/server".to_string(), "--port".to_string(), "3000".to_string()],
+                env: BTreeMap::new(),
+            },
+        );
+        let output = build_tree_string(&env);
+        assert!(output.contains("[mcp-servers]"));
+        assert!(output.contains("my-mcp"));
+    }
+
+    #[test]
+    fn tree_output_mcp_with_url() {
+        let mut env = minimal_manifest();
+        env.mcp_servers.insert(
+            "url-mcp".to_string(),
+            McpServerConfig {
+                url: Some("https://mcp.example.com/sse".to_string()),
+                command: None,
+                args: vec![],
+                env: BTreeMap::new(),
+            },
+        );
+        let output = build_tree_string(&env);
+        assert!(output.contains("url-mcp"));
+    }
+
+    #[test]
+    fn tree_output_only_skills() {
+        let mut env = AgentEnvironment {
+            name: "skills-only".to_string(),
+            version: None,
+            description: None,
+            backends: BTreeMap::new(),
+            registries: BTreeMap::new(),
+            plugins: BTreeMap::new(),
+            skills: BTreeMap::new(),
+            agents: BTreeMap::new(),
+            mcp_servers: BTreeMap::new(),
+            settings: BTreeMap::new(),
+            paths: None,
+            context: None,
+            hooks: None,
+        };
+        env.skills.insert(
+            "only-skill".to_string(),
+            SkillDependency {
+                git: None,
+                path: "./skills/only".to_string(),
+                tag: None,
+                branch: None,
+                commit: None,
+            },
+        );
+        let output = build_tree_string(&env);
+        assert!(output.starts_with("skills-only\n"));
+        assert!(output.contains("[skills]"));
+        assert!(output.contains("only-skill"));
+        assert!(!output.contains("[backends]"));
+        assert!(!output.contains("[plugins]"));
+    }
+
+    #[test]
+    fn tree_output_only_agents() {
+        let mut env = AgentEnvironment {
+            name: "agents-only".to_string(),
+            version: Some("2.0.0".to_string()),
+            description: None,
+            backends: BTreeMap::new(),
+            registries: BTreeMap::new(),
+            plugins: BTreeMap::new(),
+            skills: BTreeMap::new(),
+            agents: BTreeMap::new(),
+            mcp_servers: BTreeMap::new(),
+            settings: BTreeMap::new(),
+            paths: None,
+            context: None,
+            hooks: None,
+        };
+        env.agents.insert(
+            "solo-agent".to_string(),
+            AgentDependency {
+                git: None,
+                path: "./agents/solo.md".to_string(),
+                tag: None,
+                branch: None,
+                commit: None,
+                model: None,
+                parameters: BTreeMap::new(),
+            },
+        );
+        let output = build_tree_string(&env);
+        assert!(output.contains("[agents]"));
+        assert!(output.contains("solo-agent"));
+        // Should use last-section connector
+        assert!(output.contains("└── [agents]"));
+    }
+
+    #[test]
+    fn tree_output_no_version() {
+        let env = AgentEnvironment {
+            name: "no-version".to_string(),
+            version: None,
+            description: None,
+            backends: BTreeMap::new(),
+            registries: BTreeMap::new(),
+            plugins: BTreeMap::new(),
+            skills: BTreeMap::new(),
+            agents: BTreeMap::new(),
+            mcp_servers: BTreeMap::new(),
+            settings: BTreeMap::new(),
+            paths: None,
+            context: None,
+            hooks: None,
+        };
+        let output = build_tree_string(&env);
+        assert!(output.starts_with("no-version\n"));
+        // No version string appended
+        assert!(!output.contains(" v"));
+    }
+
+    #[test]
+    fn tree_output_completely_empty_manifest() {
+        let env = AgentEnvironment {
+            name: "empty".to_string(),
+            version: None,
+            description: None,
+            backends: BTreeMap::new(),
+            registries: BTreeMap::new(),
+            plugins: BTreeMap::new(),
+            skills: BTreeMap::new(),
+            agents: BTreeMap::new(),
+            mcp_servers: BTreeMap::new(),
+            settings: BTreeMap::new(),
+            paths: None,
+            context: None,
+            hooks: None,
+        };
+        let output = build_tree_string(&env);
+        // Just the project name, no sections
+        assert_eq!(output.trim(), "empty");
+    }
+
+    // -----------------------------------------------------------------------
+    // More build_dot_string tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn dot_output_special_characters_in_names() {
+        let mut env = AgentEnvironment {
+            name: "special-chars".to_string(),
+            version: None,
+            description: None,
+            backends: BTreeMap::new(),
+            registries: BTreeMap::new(),
+            plugins: BTreeMap::new(),
+            skills: BTreeMap::new(),
+            agents: BTreeMap::new(),
+            mcp_servers: BTreeMap::new(),
+            settings: BTreeMap::new(),
+            paths: None,
+            context: None,
+            hooks: None,
+        };
+        env.plugins.insert(
+            "my.plugin@v2".to_string(),
+            PluginDependency {
+                registry: Some("r".to_string()),
+                version: Some("2.0.0".to_string()),
+                git: None,
+                tag: None,
+                branch: None,
+                commit: None,
+                include: None,
+                exclude: None,
+            },
+        );
+        let output = build_dot_string(&env);
+        // Special chars should be sanitized in node id
+        assert!(output.contains("plugin_my_plugin_v2"));
+        // But label should contain the original name
+        assert!(output.contains("my.plugin@v2"));
+    }
+
+    #[test]
+    fn dot_output_with_only_mcp_servers() {
+        let mut env = AgentEnvironment {
+            name: "mcp-only".to_string(),
+            version: None,
+            description: None,
+            backends: BTreeMap::new(),
+            registries: BTreeMap::new(),
+            plugins: BTreeMap::new(),
+            skills: BTreeMap::new(),
+            agents: BTreeMap::new(),
+            mcp_servers: BTreeMap::new(),
+            settings: BTreeMap::new(),
+            paths: None,
+            context: None,
+            hooks: None,
+        };
+        env.mcp_servers.insert(
+            "srv".to_string(),
+            McpServerConfig {
+                url: None,
+                command: None,
+                args: vec![],
+                env: BTreeMap::new(),
+            },
+        );
+        let output = build_dot_string(&env);
+        assert!(output.contains("// MCP Servers"));
+        assert!(output.contains("mcp_srv"));
+        // Label should be just the name (no url or command)
+        assert!(output.contains("label=\"srv\""));
+        assert!(!output.contains("// Backends"));
+        assert!(!output.contains("// Plugins"));
+    }
+
+    #[test]
+    fn dot_output_git_plugin_label() {
+        let mut env = AgentEnvironment {
+            name: "git-test".to_string(),
+            version: None,
+            description: None,
+            backends: BTreeMap::new(),
+            registries: BTreeMap::new(),
+            plugins: BTreeMap::new(),
+            skills: BTreeMap::new(),
+            agents: BTreeMap::new(),
+            mcp_servers: BTreeMap::new(),
+            settings: BTreeMap::new(),
+            paths: None,
+            context: None,
+            hooks: None,
+        };
+        env.plugins.insert(
+            "git-plugin".to_string(),
+            PluginDependency {
+                registry: None,
+                version: None,
+                git: Some("https://github.com/someone/plugin.git".to_string()),
+                tag: None,
+                branch: None,
+                commit: None,
+                include: None,
+                exclude: None,
+            },
+        );
+        let output = build_dot_string(&env);
+        assert!(output.contains("git-plugin\\n(git)"));
+    }
+
+    #[test]
+    fn dot_output_plugin_no_version_no_git() {
+        let mut env = AgentEnvironment {
+            name: "bare-test".to_string(),
+            version: None,
+            description: None,
+            backends: BTreeMap::new(),
+            registries: BTreeMap::new(),
+            plugins: BTreeMap::new(),
+            skills: BTreeMap::new(),
+            agents: BTreeMap::new(),
+            mcp_servers: BTreeMap::new(),
+            settings: BTreeMap::new(),
+            paths: None,
+            context: None,
+            hooks: None,
+        };
+        env.plugins.insert(
+            "bare-plugin".to_string(),
+            PluginDependency {
+                registry: None,
+                version: None,
+                git: None,
+                tag: None,
+                branch: None,
+                commit: None,
+                include: None,
+                exclude: None,
+            },
+        );
+        let output = build_dot_string(&env);
+        assert!(output.contains("label=\"bare-plugin\""));
+    }
+
+    #[test]
+    fn dot_output_agents_local_and_git() {
+        let mut env = AgentEnvironment {
+            name: "agent-test".to_string(),
+            version: None,
+            description: None,
+            backends: BTreeMap::new(),
+            registries: BTreeMap::new(),
+            plugins: BTreeMap::new(),
+            skills: BTreeMap::new(),
+            agents: BTreeMap::new(),
+            mcp_servers: BTreeMap::new(),
+            settings: BTreeMap::new(),
+            paths: None,
+            context: None,
+            hooks: None,
+        };
+        env.agents.insert(
+            "local-agent".to_string(),
+            AgentDependency {
+                git: None,
+                path: "./agents/local.md".to_string(),
+                tag: None,
+                branch: None,
+                commit: None,
+                model: None,
+                parameters: BTreeMap::new(),
+            },
+        );
+        env.agents.insert(
+            "git-agent".to_string(),
+            AgentDependency {
+                git: Some("https://github.com/someone/agents.git".to_string()),
+                path: "agents/remote".to_string(),
+                tag: None,
+                branch: None,
+                commit: None,
+                model: None,
+                parameters: BTreeMap::new(),
+            },
+        );
+        let output = build_dot_string(&env);
+        assert!(output.contains("local-agent\\n(local)"));
+        assert!(output.contains("git-agent\\n(git)"));
+    }
+
+    #[test]
+    fn dot_output_skills_local_and_git() {
+        let mut env = AgentEnvironment {
+            name: "skill-test".to_string(),
+            version: None,
+            description: None,
+            backends: BTreeMap::new(),
+            registries: BTreeMap::new(),
+            plugins: BTreeMap::new(),
+            skills: BTreeMap::new(),
+            agents: BTreeMap::new(),
+            mcp_servers: BTreeMap::new(),
+            settings: BTreeMap::new(),
+            paths: None,
+            context: None,
+            hooks: None,
+        };
+        env.skills.insert(
+            "local-skill".to_string(),
+            SkillDependency {
+                git: None,
+                path: "./skills/local".to_string(),
+                tag: None,
+                branch: None,
+                commit: None,
+            },
+        );
+        env.skills.insert(
+            "git-skill".to_string(),
+            SkillDependency {
+                git: Some("https://github.com/someone/skills.git".to_string()),
+                path: "skills/remote".to_string(),
+                tag: None,
+                branch: None,
+                commit: None,
+            },
+        );
+        let output = build_dot_string(&env);
+        assert!(output.contains("local-skill\\n(local)"));
+        assert!(output.contains("git-skill\\n(git)"));
+    }
+
+    // -----------------------------------------------------------------------
+    // format_backend tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn format_backend_strict_with_simple_model() {
+        let cfg = BackendConfig {
+            default: Some(true),
+            isolation: Some(IsolationMode::Strict),
+            model: Some(ModelSpec::Simple("sonnet".to_string())),
+        };
+        let item = format_backend("claude-code", &cfg);
+        assert_eq!(item.text, "claude-code (strict, model: sonnet)");
+        assert!(item.children.is_empty());
+    }
+
+    #[test]
+    fn format_backend_permissive_no_model() {
+        let cfg = BackendConfig {
+            default: None,
+            isolation: Some(IsolationMode::Permissive),
+            model: None,
+        };
+        let item = format_backend("gemini-cli", &cfg);
+        assert_eq!(item.text, "gemini-cli (permissive)");
+        assert!(item.children.is_empty());
+    }
+
+    #[test]
+    fn format_backend_no_isolation_defaults_strict() {
+        let cfg = BackendConfig {
+            default: None,
+            isolation: None,
+            model: None,
+        };
+        let item = format_backend("generic", &cfg);
+        assert_eq!(item.text, "generic (strict)");
+    }
+
+    #[test]
+    fn format_backend_with_full_model() {
+        let cfg = BackendConfig {
+            default: None,
+            isolation: Some(IsolationMode::Strict),
+            model: Some(ModelSpec::Full(ModelConfig {
+                id: "claude-opus-4-6".to_string(),
+                extended_context: None,
+                effort: None,
+                plan_model: None,
+                available: Vec::new(),
+                parameters: BTreeMap::new(),
+            })),
+        };
+        let item = format_backend("claude-code", &cfg);
+        assert_eq!(item.text, "claude-code (strict, model: claude-opus-4-6)");
+    }
+
+    // -----------------------------------------------------------------------
+    // format_plugin tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn format_plugin_registry_no_lock() {
+        let dep = PluginDependency {
+            registry: Some("official".to_string()),
+            version: Some(">=1.0.0".to_string()),
+            git: None,
+            tag: None,
+            branch: None,
+            commit: None,
+            include: None,
+            exclude: None,
+        };
+        let item = format_plugin("my-plugin", &dep, None);
+        assert!(item.text.contains("my-plugin"));
+        assert!(item.text.contains("registry: official"));
+        assert!(item.children.is_empty());
+    }
+
+    #[test]
+    fn format_plugin_with_include_filter() {
+        let dep = PluginDependency {
+            registry: Some("official".to_string()),
+            version: Some("^1".to_string()),
+            git: None,
+            tag: None,
+            branch: None,
+            commit: None,
+            include: Some(AssetFilter {
+                skills: vec!["skill-a".to_string(), "skill-b".to_string()],
+                agents: vec!["agent-x".to_string()],
+            }),
+            exclude: None,
+        };
+        let item = format_plugin("filtered", &dep, None);
+        assert_eq!(item.children.len(), 3);
+        assert_eq!(item.children[0], "skill: skill-a");
+        assert_eq!(item.children[1], "skill: skill-b");
+        assert_eq!(item.children[2], "agent: agent-x");
+    }
+
+    #[test]
+    fn format_plugin_with_lockfile_resolved() {
+        let dep = PluginDependency {
+            registry: Some("official".to_string()),
+            version: Some("^1".to_string()),
+            git: None,
+            tag: None,
+            branch: None,
+            commit: None,
+            include: None,
+            exclude: None,
+        };
+        let mut lock = lockfile::types::Lockfile::new();
+        lock.plugins.insert(
+            "resolved-plugin".to_string(),
+            lockfile::types::LockedEntry {
+                source: lockfile::types::LockedSource::Registry {
+                    registry: "official".to_string(),
+                    resolved_version: "1.2.3".to_string(),
+                    path: None,
+                },
+                git_commit: Some("abcdef1234567890".to_string()),
+                integrity: None,
+            },
+        );
+        let item = format_plugin("resolved-plugin", &dep, Some(&lock));
+        // Should contain resolved info in the text
+        assert!(item.text.contains("resolved: 1.2.3"));
+        assert!(item.text.contains("#abcdef12"));
+    }
+
+    #[test]
+    fn format_plugin_lockfile_no_matching_entry() {
+        let dep = PluginDependency {
+            registry: Some("official".to_string()),
+            version: Some("^1".to_string()),
+            git: None,
+            tag: None,
+            branch: None,
+            commit: None,
+            include: None,
+            exclude: None,
+        };
+        let lock = lockfile::types::Lockfile::new();
+        let item = format_plugin("unlocked-plugin", &dep, Some(&lock));
+        // No resolved info, so no brackets
+        assert!(!item.text.contains('['));
+    }
+
+    // -----------------------------------------------------------------------
+    // format_skill tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn format_skill_local_no_lock() {
+        let dep = SkillDependency {
+            git: None,
+            path: "./skills/my-skill".to_string(),
+            tag: None,
+            branch: None,
+            commit: None,
+        };
+        let item = format_skill("my-skill", &dep, None);
+        assert!(item.text.contains("my-skill"));
+        assert!(item.text.contains("local:"));
+        assert!(item.children.is_empty());
+    }
+
+    #[test]
+    fn format_skill_git_no_lock() {
+        let dep = SkillDependency {
+            git: Some("https://github.com/someone/skills.git".to_string()),
+            path: "skills/remote".to_string(),
+            tag: Some("v1.0.0".to_string()),
+            branch: None,
+            commit: None,
+        };
+        let item = format_skill("remote-skill", &dep, None);
+        assert!(item.text.contains("remote-skill"));
+        assert!(item.text.contains("git:"));
+    }
+
+    #[test]
+    fn format_skill_with_lockfile_resolved() {
+        let dep = SkillDependency {
+            git: Some("https://github.com/someone/skills.git".to_string()),
+            path: "skills/remote".to_string(),
+            tag: None,
+            branch: None,
+            commit: None,
+        };
+        let mut lock = lockfile::types::Lockfile::new();
+        lock.skills.insert(
+            "locked-skill".to_string(),
+            lockfile::types::LockedEntry {
+                source: lockfile::types::LockedSource::Git {
+                    git: "https://github.com/someone/skills.git".to_string(),
+                    path: Some("skills/remote".to_string()),
+                },
+                git_commit: Some("1234567890abcdef".to_string()),
+                integrity: None,
+            },
+        );
+        let item = format_skill("locked-skill", &dep, Some(&lock));
+        assert!(item.text.contains("#12345678"));
+    }
+
+    // -----------------------------------------------------------------------
+    // format_agent tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn format_agent_local_no_lock() {
+        let dep = AgentDependency {
+            git: None,
+            path: "./agents/my-agent.md".to_string(),
+            tag: None,
+            branch: None,
+            commit: None,
+            model: Some("opus".to_string()),
+            parameters: BTreeMap::new(),
+        };
+        let item = format_agent("my-agent", &dep, None);
+        assert!(item.text.contains("my-agent"));
+        assert!(item.text.contains("local:"));
+        assert!(item.children.is_empty());
+    }
+
+    #[test]
+    fn format_agent_git_no_lock() {
+        let dep = AgentDependency {
+            git: Some("https://github.com/someone/agents.git".to_string()),
+            path: "agents/remote".to_string(),
+            tag: Some("v2.0.0".to_string()),
+            branch: None,
+            commit: None,
+            model: None,
+            parameters: BTreeMap::new(),
+        };
+        let item = format_agent("remote-agent", &dep, None);
+        assert!(item.text.contains("remote-agent"));
+        assert!(item.text.contains("git:"));
+    }
+
+    #[test]
+    fn format_agent_with_lockfile_resolved() {
+        let dep = AgentDependency {
+            git: Some("https://github.com/someone/agents.git".to_string()),
+            path: "agents/remote".to_string(),
+            tag: None,
+            branch: None,
+            commit: None,
+            model: None,
+            parameters: BTreeMap::new(),
+        };
+        let mut lock = lockfile::types::Lockfile::new();
+        lock.agents.insert(
+            "locked-agent".to_string(),
+            lockfile::types::LockedEntry {
+                source: lockfile::types::LockedSource::Git {
+                    git: "https://github.com/someone/agents.git".to_string(),
+                    path: Some("agents/remote".to_string()),
+                },
+                git_commit: Some("deadbeef12345678".to_string()),
+                integrity: None,
+            },
+        );
+        let item = format_agent("locked-agent", &dep, Some(&lock));
+        assert!(item.text.contains("#deadbeef"));
+    }
+
+    // -----------------------------------------------------------------------
+    // format_mcp tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn format_mcp_url_source() {
+        let cfg = McpServerConfig {
+            url: Some("https://mcp.example.com/sse".to_string()),
+            command: None,
+            args: vec![],
+            env: BTreeMap::new(),
+        };
+        let item = format_mcp("my-mcp", &cfg);
+        assert!(item.text.contains("my-mcp"));
+        assert!(item.text.contains("url:"));
+        assert!(item.children.is_empty());
+    }
+
+    #[test]
+    fn format_mcp_command_source() {
+        let cfg = McpServerConfig {
+            url: None,
+            command: Some("npx".to_string()),
+            args: vec!["@scope/server".to_string()],
+            env: BTreeMap::new(),
+        };
+        let item = format_mcp("cmd-mcp", &cfg);
+        assert!(item.text.contains("cmd-mcp"));
+        assert!(item.text.contains("command:"));
+    }
+
+    #[test]
+    fn format_mcp_unconfigured() {
+        let cfg = McpServerConfig {
+            url: None,
+            command: None,
+            args: vec![],
+            env: BTreeMap::new(),
+        };
+        let item = format_mcp("bare-mcp", &cfg);
+        assert!(item.text.contains("bare-mcp"));
+        assert!(item.text.contains("unconfigured"));
+    }
+
+    // -----------------------------------------------------------------------
+    // build_tree_string with lockfile-related content
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn tree_output_multiple_sections_correct_connectors() {
+        // When there are exactly two sections, the first uses ├── and the last uses └──
+        let mut env = AgentEnvironment {
+            name: "two-sections".to_string(),
+            version: None,
+            description: None,
+            backends: BTreeMap::new(),
+            registries: BTreeMap::new(),
+            plugins: BTreeMap::new(),
+            skills: BTreeMap::new(),
+            agents: BTreeMap::new(),
+            mcp_servers: BTreeMap::new(),
+            settings: BTreeMap::new(),
+            paths: None,
+            context: None,
+            hooks: None,
+        };
+        env.skills.insert(
+            "s1".to_string(),
+            SkillDependency {
+                git: None,
+                path: "./skills/s1".to_string(),
+                tag: None,
+                branch: None,
+                commit: None,
+            },
+        );
+        env.mcp_servers.insert(
+            "m1".to_string(),
+            McpServerConfig {
+                url: Some("https://example.com".to_string()),
+                command: None,
+                args: vec![],
+                env: BTreeMap::new(),
+            },
+        );
+        let output = build_tree_string(&env);
+        assert!(output.contains("├── [skills]"));
+        assert!(output.contains("└── [mcp-servers]"));
+    }
+
+    #[test]
+    fn tree_output_multiple_items_in_section_correct_connectors() {
+        let mut env = AgentEnvironment {
+            name: "multi-items".to_string(),
+            version: None,
+            description: None,
+            backends: BTreeMap::new(),
+            registries: BTreeMap::new(),
+            plugins: BTreeMap::new(),
+            skills: BTreeMap::new(),
+            agents: BTreeMap::new(),
+            mcp_servers: BTreeMap::new(),
+            settings: BTreeMap::new(),
+            paths: None,
+            context: None,
+            hooks: None,
+        };
+        env.skills.insert(
+            "alpha".to_string(),
+            SkillDependency {
+                git: None,
+                path: "./skills/alpha".to_string(),
+                tag: None,
+                branch: None,
+                commit: None,
+            },
+        );
+        env.skills.insert(
+            "beta".to_string(),
+            SkillDependency {
+                git: None,
+                path: "./skills/beta".to_string(),
+                tag: None,
+                branch: None,
+                commit: None,
+            },
+        );
+        env.skills.insert(
+            "gamma".to_string(),
+            SkillDependency {
+                git: None,
+                path: "./skills/gamma".to_string(),
+                tag: None,
+                branch: None,
+                commit: None,
+            },
+        );
+        let output = build_tree_string(&env);
+        // First two items use ├──, last uses └──
+        let lines: Vec<&str> = output.lines().collect();
+        let skill_lines: Vec<&&str> = lines.iter().filter(|l| l.contains("alpha") || l.contains("beta") || l.contains("gamma")).collect();
+        assert_eq!(skill_lines.len(), 3);
+        assert!(skill_lines[0].contains("├──"));
+        assert!(skill_lines[1].contains("├──"));
+        assert!(skill_lines[2].contains("└──"));
+    }
+
+    #[test]
+    fn tree_output_plugin_multiple_children_connectors() {
+        let mut env = AgentEnvironment {
+            name: "children-test".to_string(),
+            version: None,
+            description: None,
+            backends: BTreeMap::new(),
+            registries: BTreeMap::new(),
+            plugins: BTreeMap::new(),
+            skills: BTreeMap::new(),
+            agents: BTreeMap::new(),
+            mcp_servers: BTreeMap::new(),
+            settings: BTreeMap::new(),
+            paths: None,
+            context: None,
+            hooks: None,
+        };
+        env.plugins.insert(
+            "big-plugin".to_string(),
+            PluginDependency {
+                registry: Some("official".to_string()),
+                version: Some("^1".to_string()),
+                git: None,
+                tag: None,
+                branch: None,
+                commit: None,
+                include: Some(AssetFilter {
+                    skills: vec!["s1".to_string(), "s2".to_string()],
+                    agents: vec!["a1".to_string()],
+                }),
+                exclude: None,
+            },
+        );
+        let output = build_tree_string(&env);
+        assert!(output.contains("skill: s1"));
+        assert!(output.contains("skill: s2"));
+        assert!(output.contains("agent: a1"));
+        // Verify child connectors: first two use ├──, last uses └──
+        let lines: Vec<&str> = output.lines().collect();
+        let child_lines: Vec<&&str> = lines.iter().filter(|l| l.contains("skill: s") || l.contains("agent: a1")).collect();
+        assert_eq!(child_lines.len(), 3);
+        assert!(child_lines[0].contains("├──"));
+        assert!(child_lines[1].contains("├──"));
+        assert!(child_lines[2].contains("└──"));
+    }
+
+    // -----------------------------------------------------------------------
+    // dot_output additional edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn dot_output_completely_empty_manifest() {
+        let env = AgentEnvironment {
+            name: "empty-dot".to_string(),
+            version: None,
+            description: None,
+            backends: BTreeMap::new(),
+            registries: BTreeMap::new(),
+            plugins: BTreeMap::new(),
+            skills: BTreeMap::new(),
+            agents: BTreeMap::new(),
+            mcp_servers: BTreeMap::new(),
+            settings: BTreeMap::new(),
+            paths: None,
+            context: None,
+            hooks: None,
+        };
+        let output = build_dot_string(&env);
+        assert!(output.contains("digraph \"empty-dot\""));
+        assert!(output.contains("root [label=\"empty-dot\"]"));
+        assert!(!output.contains("// Backends"));
+        assert!(!output.contains("// Plugins"));
+        assert!(!output.contains("// Skills"));
+        assert!(!output.contains("// Agents"));
+        assert!(!output.contains("// MCP Servers"));
+    }
+
+    #[test]
+    fn dot_output_backend_permissive_vs_strict() {
+        let mut env = AgentEnvironment {
+            name: "isolation-test".to_string(),
+            version: None,
+            description: None,
+            backends: BTreeMap::new(),
+            registries: BTreeMap::new(),
+            plugins: BTreeMap::new(),
+            skills: BTreeMap::new(),
+            agents: BTreeMap::new(),
+            mcp_servers: BTreeMap::new(),
+            settings: BTreeMap::new(),
+            paths: None,
+            context: None,
+            hooks: None,
+        };
+        env.backends.insert(
+            "strict-be".to_string(),
+            BackendConfig {
+                default: None,
+                isolation: Some(IsolationMode::Strict),
+                model: None,
+            },
+        );
+        env.backends.insert(
+            "perm-be".to_string(),
+            BackendConfig {
+                default: None,
+                isolation: Some(IsolationMode::Permissive),
+                model: None,
+            },
+        );
+        env.backends.insert(
+            "default-be".to_string(),
+            BackendConfig {
+                default: None,
+                isolation: None,
+                model: None,
+            },
+        );
+        let output = build_dot_string(&env);
+        assert!(output.contains("(strict)"));
+        assert!(output.contains("(permissive)"));
+        // default-be has no isolation set, defaults to strict
+        let default_line = output.lines().find(|l| l.contains("default-be")).unwrap();
+        assert!(default_line.contains("strict"));
+    }
+
+    #[test]
+    fn dot_output_plugin_with_version() {
+        let mut env = AgentEnvironment {
+            name: "version-test".to_string(),
+            version: None,
+            description: None,
+            backends: BTreeMap::new(),
+            registries: BTreeMap::new(),
+            plugins: BTreeMap::new(),
+            skills: BTreeMap::new(),
+            agents: BTreeMap::new(),
+            mcp_servers: BTreeMap::new(),
+            settings: BTreeMap::new(),
+            paths: None,
+            context: None,
+            hooks: None,
+        };
+        env.plugins.insert(
+            "versioned".to_string(),
+            PluginDependency {
+                registry: Some("official".to_string()),
+                version: Some(">=2.0.0".to_string()),
+                git: None,
+                tag: None,
+                branch: None,
+                commit: None,
+                include: None,
+                exclude: None,
+            },
+        );
+        let output = build_dot_string(&env);
+        assert!(output.contains("versioned\\n>=2.0.0"));
+    }
+
+    #[test]
+    fn dot_node_id_all_alphanumeric() {
+        assert_eq!(dot_node_id("x", "abc123"), "x_abc123");
+    }
+
+    #[test]
+    fn dot_node_id_empty_name() {
+        assert_eq!(dot_node_id("plugin", ""), "plugin_");
+    }
+
+    // -----------------------------------------------------------------------
+    // run() integration tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn run_tree_format_succeeds_with_manifest() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        let manifest_content = "name: graph-test\nbackends:\n  claude-code:\n    default: true\n    isolation: strict\nskills:\n  my-skill:\n    path: ./skills/my-skill\n";
+        std::fs::write(dir.path().join("agent-environment.yml"), manifest_content).unwrap();
+
+        let old_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        let args = GraphArgs { format: "tree".to_string() };
+        let result = run(args);
+        std::env::set_current_dir(&old_cwd).unwrap();
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn run_dot_format_succeeds_with_manifest() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        let manifest_content = "name: graph-dot-test\nbackends:\n  claude-code:\n    default: true\n    isolation: strict\nplugins:\n  my-plugin:\n    registry: official\n    version: \">=1.0.0\"\n";
+        std::fs::write(dir.path().join("agent-environment.yml"), manifest_content).unwrap();
+
+        let old_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        let args = GraphArgs { format: "dot".to_string() };
+        let result = run(args);
+        std::env::set_current_dir(&old_cwd).unwrap();
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn run_unknown_format_errors() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        let manifest_content = "name: graph-err\nbackends:\n  claude-code: {}\n";
+        std::fs::write(dir.path().join("agent-environment.yml"), manifest_content).unwrap();
+
+        let old_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        let args = GraphArgs { format: "invalid".to_string() };
+        let result = run(args);
+        std::env::set_current_dir(&old_cwd).unwrap();
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("unknown format"));
+    }
+
+    #[test]
+    fn run_no_manifest_errors() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+
+        let old_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        let args = GraphArgs { format: "tree".to_string() };
+        let result = run(args);
+        std::env::set_current_dir(&old_cwd).unwrap();
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn run_tree_with_lockfile() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        let manifest_content = "name: lock-graph\nbackends:\n  claude-code:\n    default: true\nskills:\n  my-skill:\n    path: ./skills/my-skill\n";
+        std::fs::write(dir.path().join("agent-environment.yml"), manifest_content).unwrap();
+
+        // Create a lockfile
+        let mut lock = lockfile::types::Lockfile::new();
+        lock.skills.insert(
+            "my-skill".to_string(),
+            lockfile::types::LockedEntry {
+                source: lockfile::types::LockedSource::Local {
+                    local: "./skills/my-skill".to_string(),
+                },
+                git_commit: None,
+                integrity: None,
+            },
+        );
+        let lock_content = serde_yaml::to_string(&lock).unwrap();
+        std::fs::write(dir.path().join("agent-environment.lock"), &lock_content).unwrap();
+
+        let old_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        let args = GraphArgs { format: "tree".to_string() };
+        let result = run(args);
+        std::env::set_current_dir(&old_cwd).unwrap();
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn run_tree_full_manifest_all_sections() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        let manifest_content = r#"
+name: full-graph
+version: "1.0.0"
+backends:
+  claude-code:
+    default: true
+    isolation: strict
+  gemini-cli:
+    isolation: permissive
+plugins:
+  my-plugin:
+    registry: official
+    version: ">=1.0.0"
+    include:
+      skills:
+        - skill-a
+      agents:
+        - agent-b
+skills:
+  local-skill:
+    path: ./skills/local
+  remote-skill:
+    git: https://github.com/test/skills.git
+    path: skills/remote
+    tag: v1.0.0
+agents:
+  local-agent:
+    path: ./agents/local.md
+  remote-agent:
+    git: https://github.com/test/agents.git
+    path: agents/remote
+mcp-servers:
+  url-mcp:
+    url: https://example.com/sse
+  cmd-mcp:
+    command: npx
+    args:
+      - "@scope/server"
+"#;
+        std::fs::write(dir.path().join("agent-environment.yml"), manifest_content).unwrap();
+
+        let old_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        let args = GraphArgs { format: "tree".to_string() };
+        let result = run(args);
+        std::env::set_current_dir(&old_cwd).unwrap();
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn run_dot_full_manifest_all_sections() {
+        let _guard = super::super::PROCESS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        let manifest_content = r#"
+name: full-dot
+backends:
+  claude-code:
+    default: true
+plugins:
+  git-plugin:
+    git: https://github.com/test/plugin.git
+skills:
+  local-skill:
+    path: ./skills/local
+agents:
+  git-agent:
+    git: https://github.com/test/agents.git
+    path: agents/remote
+mcp-servers:
+  bare-mcp: {}
+"#;
+        std::fs::write(dir.path().join("agent-environment.yml"), manifest_content).unwrap();
+
+        let old_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        let args = GraphArgs { format: "dot".to_string() };
+        let result = run(args);
+        std::env::set_current_dir(&old_cwd).unwrap();
+
+        assert!(result.is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // Additional edge case tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn dot_output_mcp_url_vs_command() {
+        let mut env = AgentEnvironment {
+            name: "mcp-test".to_string(),
+            version: None,
+            description: None,
+            backends: BTreeMap::new(),
+            registries: BTreeMap::new(),
+            plugins: BTreeMap::new(),
+            skills: BTreeMap::new(),
+            agents: BTreeMap::new(),
+            mcp_servers: BTreeMap::new(),
+            settings: BTreeMap::new(),
+            paths: None,
+            context: None,
+            hooks: None,
+        };
+        env.mcp_servers.insert(
+            "url-srv".to_string(),
+            McpServerConfig {
+                url: Some("https://example.com".to_string()),
+                command: None,
+                args: vec![],
+                env: BTreeMap::new(),
+            },
+        );
+        env.mcp_servers.insert(
+            "cmd-srv".to_string(),
+            McpServerConfig {
+                url: None,
+                command: Some("node".to_string()),
+                args: vec![],
+                env: BTreeMap::new(),
+            },
+        );
+        let output = build_dot_string(&env);
+        assert!(output.contains("url-srv\\n(url)"));
+        assert!(output.contains("cmd-srv\\n(command)"));
+    }
 }

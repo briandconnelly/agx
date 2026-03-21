@@ -498,6 +498,7 @@ fn is_asset_included(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lockfile::types::LockedEntry;
     use crate::manifest::types::*;
 
     /// Helper: build a minimal manifest for testing.
@@ -983,5 +984,1188 @@ plugins:
             ResolverError::NoMatch { package, .. } => assert_eq!(package, "missing-plugin"),
             other => panic!("expected NoMatch, got {:?}", other),
         }
+    }
+
+    // --- resolve_plugin with GitHub source_kind ---
+
+    #[test]
+    fn resolve_plugin_github_source_with_sha() {
+        use crate::sources::registry::PluginSourceKind;
+
+        let manifest: AgentEnvironment = serde_yaml::from_str(
+            r#"
+name: gh-test
+backends:
+  claude-code: {}
+registries:
+  official:
+    url: https://example.com
+plugins:
+  gh-plugin:
+    registry: official
+    version: "^1.0.0"
+"#,
+        )
+        .unwrap();
+
+        let mut rv = BTreeMap::new();
+        let mut official = BTreeMap::new();
+        official.insert(
+            "gh-plugin".to_string(),
+            vec![PluginVersionInfo {
+                version: semver::Version::new(1, 0, 0),
+                git_commit: "ignored".to_string(),
+                path: None,
+                source_kind: Some(PluginSourceKind::GitHub {
+                    repo: "owner/repo".to_string(),
+                    git_ref: Some("v1.0.0".to_string()),
+                    sha: Some("sha123".to_string()),
+                }),
+            }],
+        );
+        rv.insert("official".to_string(), official);
+
+        let context = ResolveContext {
+            registry_versions: rv,
+            git_commits: BTreeMap::new(),
+        };
+        let plugin_assets = BTreeMap::new();
+
+        let lockfile = resolve_all(&manifest, &context, &plugin_assets).unwrap();
+        let p = &lockfile.plugins["gh-plugin"];
+        match &p.source {
+            LockedSource::Git { git, path } => {
+                assert_eq!(git, "https://github.com/owner/repo.git");
+                assert!(path.is_none());
+            }
+            other => panic!("expected Git source, got {:?}", other),
+        }
+        assert_eq!(p.git_commit.as_deref(), Some("sha123"));
+    }
+
+    #[test]
+    fn resolve_plugin_github_source_no_sha_uses_context() {
+        use crate::sources::registry::PluginSourceKind;
+
+        let manifest: AgentEnvironment = serde_yaml::from_str(
+            r#"
+name: gh-nosha
+backends:
+  claude-code: {}
+registries:
+  official:
+    url: https://example.com
+plugins:
+  gh-plugin:
+    registry: official
+    version: "^1.0.0"
+"#,
+        )
+        .unwrap();
+
+        let mut rv = BTreeMap::new();
+        let mut official = BTreeMap::new();
+        official.insert(
+            "gh-plugin".to_string(),
+            vec![PluginVersionInfo {
+                version: semver::Version::new(1, 0, 0),
+                git_commit: "ignored".to_string(),
+                path: None,
+                source_kind: Some(PluginSourceKind::GitHub {
+                    repo: "owner/repo".to_string(),
+                    git_ref: Some("v1.0.0".to_string()),
+                    sha: None,
+                }),
+            }],
+        );
+        rv.insert("official".to_string(), official);
+
+        let mut git_commits = BTreeMap::new();
+        git_commits.insert(
+            "https://github.com/owner/repo.git#v1.0.0".to_string(),
+            "resolved_sha".to_string(),
+        );
+
+        let context = ResolveContext {
+            registry_versions: rv,
+            git_commits,
+        };
+        let plugin_assets = BTreeMap::new();
+
+        let lockfile = resolve_all(&manifest, &context, &plugin_assets).unwrap();
+        let p = &lockfile.plugins["gh-plugin"];
+        assert_eq!(p.git_commit.as_deref(), Some("resolved_sha"));
+    }
+
+    // --- resolve_plugin with GitUrl source_kind ---
+
+    #[test]
+    fn resolve_plugin_giturl_source_with_sha() {
+        use crate::sources::registry::PluginSourceKind;
+
+        let manifest: AgentEnvironment = serde_yaml::from_str(
+            r#"
+name: giturl-test
+backends:
+  claude-code: {}
+registries:
+  official:
+    url: https://example.com
+plugins:
+  giturl-plugin:
+    registry: official
+    version: "^1.0.0"
+"#,
+        )
+        .unwrap();
+
+        let mut rv = BTreeMap::new();
+        let mut official = BTreeMap::new();
+        official.insert(
+            "giturl-plugin".to_string(),
+            vec![PluginVersionInfo {
+                version: semver::Version::new(1, 0, 0),
+                git_commit: "ignored".to_string(),
+                path: None,
+                source_kind: Some(PluginSourceKind::GitUrl {
+                    url: "https://gitlab.com/org/plugin.git".to_string(),
+                    git_ref: None,
+                    sha: Some("giturl_sha".to_string()),
+                }),
+            }],
+        );
+        rv.insert("official".to_string(), official);
+
+        let context = ResolveContext {
+            registry_versions: rv,
+            git_commits: BTreeMap::new(),
+        };
+        let plugin_assets = BTreeMap::new();
+
+        let lockfile = resolve_all(&manifest, &context, &plugin_assets).unwrap();
+        let p = &lockfile.plugins["giturl-plugin"];
+        match &p.source {
+            LockedSource::Git { git, .. } => {
+                assert_eq!(git, "https://gitlab.com/org/plugin.git");
+            }
+            other => panic!("expected Git source, got {:?}", other),
+        }
+        assert_eq!(p.git_commit.as_deref(), Some("giturl_sha"));
+    }
+
+    #[test]
+    fn resolve_plugin_giturl_source_no_sha() {
+        use crate::sources::registry::PluginSourceKind;
+
+        let manifest: AgentEnvironment = serde_yaml::from_str(
+            r#"
+name: giturl-nosha
+backends:
+  claude-code: {}
+registries:
+  official:
+    url: https://example.com
+plugins:
+  giturl-plugin:
+    registry: official
+    version: "^1.0.0"
+"#,
+        )
+        .unwrap();
+
+        let mut rv = BTreeMap::new();
+        let mut official = BTreeMap::new();
+        official.insert(
+            "giturl-plugin".to_string(),
+            vec![PluginVersionInfo {
+                version: semver::Version::new(1, 0, 0),
+                git_commit: "ignored".to_string(),
+                path: None,
+                source_kind: Some(PluginSourceKind::GitUrl {
+                    url: "https://gitlab.com/org/plugin.git".to_string(),
+                    git_ref: Some("main".to_string()),
+                    sha: None,
+                }),
+            }],
+        );
+        rv.insert("official".to_string(), official);
+
+        let mut git_commits = BTreeMap::new();
+        git_commits.insert(
+            "https://gitlab.com/org/plugin.git#main".to_string(),
+            "resolved_giturl".to_string(),
+        );
+
+        let context = ResolveContext {
+            registry_versions: rv,
+            git_commits,
+        };
+        let plugin_assets = BTreeMap::new();
+
+        let lockfile = resolve_all(&manifest, &context, &plugin_assets).unwrap();
+        let p = &lockfile.plugins["giturl-plugin"];
+        assert_eq!(p.git_commit.as_deref(), Some("resolved_giturl"));
+    }
+
+    // --- resolve_plugin with GitSubdir source_kind ---
+
+    #[test]
+    fn resolve_plugin_gitsubdir_source_with_sha() {
+        use crate::sources::registry::PluginSourceKind;
+
+        let manifest: AgentEnvironment = serde_yaml::from_str(
+            r#"
+name: subdir-test
+backends:
+  claude-code: {}
+registries:
+  official:
+    url: https://example.com
+plugins:
+  subdir-plugin:
+    registry: official
+    version: "^1.0.0"
+"#,
+        )
+        .unwrap();
+
+        let mut rv = BTreeMap::new();
+        let mut official = BTreeMap::new();
+        official.insert(
+            "subdir-plugin".to_string(),
+            vec![PluginVersionInfo {
+                version: semver::Version::new(1, 0, 0),
+                git_commit: "ignored".to_string(),
+                path: None,
+                source_kind: Some(PluginSourceKind::GitSubdir {
+                    url: "owner/monorepo".to_string(),
+                    path: "plugins/my-plugin".to_string(),
+                    git_ref: None,
+                    sha: Some("subdir_sha".to_string()),
+                }),
+            }],
+        );
+        rv.insert("official".to_string(), official);
+
+        let context = ResolveContext {
+            registry_versions: rv,
+            git_commits: BTreeMap::new(),
+        };
+        let plugin_assets = BTreeMap::new();
+
+        let lockfile = resolve_all(&manifest, &context, &plugin_assets).unwrap();
+        let p = &lockfile.plugins["subdir-plugin"];
+        match &p.source {
+            LockedSource::Git { git, path } => {
+                // owner/monorepo should be expanded to full github URL
+                assert_eq!(git, "https://github.com/owner/monorepo.git");
+                assert_eq!(path.as_deref(), Some("plugins/my-plugin"));
+            }
+            other => panic!("expected Git source, got {:?}", other),
+        }
+        assert_eq!(p.git_commit.as_deref(), Some("subdir_sha"));
+    }
+
+    #[test]
+    fn resolve_plugin_gitsubdir_no_sha_uses_context() {
+        use crate::sources::registry::PluginSourceKind;
+
+        let manifest: AgentEnvironment = serde_yaml::from_str(
+            r#"
+name: subdir-nosha
+backends:
+  claude-code: {}
+registries:
+  official:
+    url: https://example.com
+plugins:
+  subdir-plugin:
+    registry: official
+    version: "^1.0.0"
+"#,
+        )
+        .unwrap();
+
+        let mut rv = BTreeMap::new();
+        let mut official = BTreeMap::new();
+        official.insert(
+            "subdir-plugin".to_string(),
+            vec![PluginVersionInfo {
+                version: semver::Version::new(1, 0, 0),
+                git_commit: "ignored".to_string(),
+                path: None,
+                source_kind: Some(PluginSourceKind::GitSubdir {
+                    url: "https://github.com/org/monorepo.git".to_string(),
+                    path: "plugins/sub".to_string(),
+                    git_ref: Some("v2.0".to_string()),
+                    sha: None,
+                }),
+            }],
+        );
+        rv.insert("official".to_string(), official);
+
+        let mut git_commits = BTreeMap::new();
+        git_commits.insert(
+            "https://github.com/org/monorepo.git#v2.0".to_string(),
+            "subdir_resolved".to_string(),
+        );
+
+        let context = ResolveContext {
+            registry_versions: rv,
+            git_commits,
+        };
+        let plugin_assets = BTreeMap::new();
+
+        let lockfile = resolve_all(&manifest, &context, &plugin_assets).unwrap();
+        let p = &lockfile.plugins["subdir-plugin"];
+        assert_eq!(p.git_commit.as_deref(), Some("subdir_resolved"));
+    }
+
+    // --- resolve_plugin with Npm source_kind ---
+
+    #[test]
+    fn resolve_plugin_npm_source() {
+        use crate::sources::registry::PluginSourceKind;
+
+        let manifest: AgentEnvironment = serde_yaml::from_str(
+            r#"
+name: npm-test
+backends:
+  claude-code: {}
+registries:
+  official:
+    url: https://example.com
+plugins:
+  npm-plugin:
+    registry: official
+    version: "^1.0.0"
+"#,
+        )
+        .unwrap();
+
+        let mut rv = BTreeMap::new();
+        let mut official = BTreeMap::new();
+        official.insert(
+            "npm-plugin".to_string(),
+            vec![PluginVersionInfo {
+                version: semver::Version::new(1, 0, 0),
+                git_commit: "ignored".to_string(),
+                path: None,
+                source_kind: Some(PluginSourceKind::Npm {
+                    package: "@scope/my-plugin".to_string(),
+                    version: Some("1.0.0".to_string()),
+                    registry: Some("https://registry.npmjs.org".to_string()),
+                }),
+            }],
+        );
+        rv.insert("official".to_string(), official);
+
+        let context = ResolveContext {
+            registry_versions: rv,
+            git_commits: BTreeMap::new(),
+        };
+        let plugin_assets = BTreeMap::new();
+
+        let lockfile = resolve_all(&manifest, &context, &plugin_assets).unwrap();
+        let p = &lockfile.plugins["npm-plugin"];
+        match &p.source {
+            LockedSource::Npm {
+                package,
+                resolved_version,
+                npm_registry,
+            } => {
+                assert_eq!(package, "@scope/my-plugin");
+                assert_eq!(resolved_version.as_deref(), Some("1.0.0"));
+                assert_eq!(npm_registry.as_deref(), Some("https://registry.npmjs.org"));
+            }
+            other => panic!("expected Npm source, got {:?}", other),
+        }
+        assert!(p.git_commit.is_none());
+    }
+
+    // --- resolve_plugin with RegistryLocal source_kind ---
+
+    #[test]
+    fn resolve_plugin_registry_local_source() {
+        use crate::sources::registry::PluginSourceKind;
+
+        let manifest: AgentEnvironment = serde_yaml::from_str(
+            r#"
+name: reglocal-test
+backends:
+  claude-code: {}
+registries:
+  official:
+    url: https://example.com
+plugins:
+  local-plugin:
+    registry: official
+    version: "^1.0.0"
+"#,
+        )
+        .unwrap();
+
+        let mut rv = BTreeMap::new();
+        let mut official = BTreeMap::new();
+        official.insert(
+            "local-plugin".to_string(),
+            vec![PluginVersionInfo {
+                version: semver::Version::new(1, 0, 0),
+                git_commit: "commit_abc".to_string(),
+                path: Some("plugins/local-plugin".to_string()),
+                source_kind: Some(PluginSourceKind::RegistryLocal {
+                    path: "plugins/local-plugin".to_string(),
+                }),
+            }],
+        );
+        rv.insert("official".to_string(), official);
+
+        let context = ResolveContext {
+            registry_versions: rv,
+            git_commits: BTreeMap::new(),
+        };
+        let plugin_assets = BTreeMap::new();
+
+        let lockfile = resolve_all(&manifest, &context, &plugin_assets).unwrap();
+        let p = &lockfile.plugins["local-plugin"];
+        match &p.source {
+            LockedSource::Registry {
+                registry,
+                resolved_version,
+                path,
+            } => {
+                assert_eq!(registry, "official");
+                assert_eq!(resolved_version, "1.0.0");
+                assert_eq!(path.as_deref(), Some("plugins/local-plugin"));
+            }
+            other => panic!("expected Registry source, got {:?}", other),
+        }
+        assert_eq!(p.git_commit.as_deref(), Some("commit_abc"));
+    }
+
+    // --- resolve_plugin invalid source ---
+
+    #[test]
+    fn resolve_plugin_invalid_source_errors() {
+        let manifest: AgentEnvironment = serde_yaml::from_str(
+            r#"
+name: invalid-src
+backends:
+  claude-code: {}
+plugins:
+  bad-plugin:
+    version: "^1.0.0"
+"#,
+        )
+        .unwrap();
+
+        let context = ResolveContext {
+            registry_versions: BTreeMap::new(),
+            git_commits: BTreeMap::new(),
+        };
+        let plugin_assets = BTreeMap::new();
+
+        let err = resolve_all(&manifest, &context, &plugin_assets).unwrap_err();
+        match err {
+            ResolverError::InvalidSource { name, .. } => assert_eq!(name, "bad-plugin"),
+            other => panic!("expected InvalidSource, got {:?}", other),
+        }
+    }
+
+    // --- resolve_plugin registry not found ---
+
+    #[test]
+    fn resolve_plugin_registry_not_found() {
+        let manifest: AgentEnvironment = serde_yaml::from_str(
+            r#"
+name: noreg
+backends:
+  claude-code: {}
+registries:
+  missing:
+    url: https://example.com
+plugins:
+  some-plugin:
+    registry: missing
+    version: "^1"
+"#,
+        )
+        .unwrap();
+
+        let context = ResolveContext {
+            registry_versions: BTreeMap::new(),
+            git_commits: BTreeMap::new(),
+        };
+        let plugin_assets = BTreeMap::new();
+
+        let err = resolve_all(&manifest, &context, &plugin_assets).unwrap_err();
+        match err {
+            ResolverError::RegistryNotFound { registry } => assert_eq!(registry, "missing"),
+            other => panic!("expected RegistryNotFound, got {:?}", other),
+        }
+    }
+
+    // --- resolve_plugin plugin not in registry ---
+
+    #[test]
+    fn resolve_plugin_not_in_registry() {
+        let manifest: AgentEnvironment = serde_yaml::from_str(
+            r#"
+name: noplugin
+backends:
+  claude-code: {}
+registries:
+  official:
+    url: https://example.com
+plugins:
+  ghost-plugin:
+    registry: official
+    version: "^1"
+"#,
+        )
+        .unwrap();
+
+        let mut rv = BTreeMap::new();
+        rv.insert("official".to_string(), BTreeMap::new());
+
+        let context = ResolveContext {
+            registry_versions: rv,
+            git_commits: BTreeMap::new(),
+        };
+        let plugin_assets = BTreeMap::new();
+
+        let err = resolve_all(&manifest, &context, &plugin_assets).unwrap_err();
+        match err {
+            ResolverError::NoMatch { package, .. } => assert_eq!(package, "ghost-plugin"),
+            other => panic!("expected NoMatch, got {:?}", other),
+        }
+    }
+
+    // --- resolve_git_ref tests ---
+
+    #[test]
+    fn resolve_git_ref_pinned_commit() {
+        let context = ResolveContext {
+            registry_versions: BTreeMap::new(),
+            git_commits: BTreeMap::new(),
+        };
+        let result = resolve_git_ref(
+            "https://github.com/foo/bar.git",
+            None,
+            None,
+            Some("deadbeef"),
+            &context,
+        )
+        .unwrap();
+        assert_eq!(result, "deadbeef");
+    }
+
+    #[test]
+    fn resolve_git_ref_tag_lookup() {
+        let mut git_commits = BTreeMap::new();
+        git_commits.insert(
+            "https://github.com/foo/bar.git#v1.0".to_string(),
+            "tag_sha".to_string(),
+        );
+        let context = ResolveContext {
+            registry_versions: BTreeMap::new(),
+            git_commits,
+        };
+        let result = resolve_git_ref(
+            "https://github.com/foo/bar.git",
+            Some("v1.0"),
+            None,
+            None,
+            &context,
+        )
+        .unwrap();
+        assert_eq!(result, "tag_sha");
+    }
+
+    #[test]
+    fn resolve_git_ref_branch_lookup() {
+        let mut git_commits = BTreeMap::new();
+        git_commits.insert(
+            "https://github.com/foo/bar.git#develop".to_string(),
+            "branch_sha".to_string(),
+        );
+        let context = ResolveContext {
+            registry_versions: BTreeMap::new(),
+            git_commits,
+        };
+        let result = resolve_git_ref(
+            "https://github.com/foo/bar.git",
+            None,
+            Some("develop"),
+            None,
+            &context,
+        )
+        .unwrap();
+        assert_eq!(result, "branch_sha");
+    }
+
+    #[test]
+    fn resolve_git_ref_tag_takes_precedence_over_branch() {
+        let mut git_commits = BTreeMap::new();
+        git_commits.insert(
+            "https://github.com/foo/bar.git#v1.0".to_string(),
+            "tag_sha".to_string(),
+        );
+        git_commits.insert(
+            "https://github.com/foo/bar.git#main".to_string(),
+            "branch_sha".to_string(),
+        );
+        let context = ResolveContext {
+            registry_versions: BTreeMap::new(),
+            git_commits,
+        };
+        // When both tag and branch are specified, tag wins (tag.or(branch))
+        let result = resolve_git_ref(
+            "https://github.com/foo/bar.git",
+            Some("v1.0"),
+            Some("main"),
+            None,
+            &context,
+        )
+        .unwrap();
+        assert_eq!(result, "tag_sha");
+    }
+
+    #[test]
+    fn resolve_git_ref_fallback_to_bare_url() {
+        let mut git_commits = BTreeMap::new();
+        // Only bare URL is in context (no #ref suffix).
+        git_commits.insert(
+            "https://github.com/foo/bar.git".to_string(),
+            "bare_sha".to_string(),
+        );
+        let context = ResolveContext {
+            registry_versions: BTreeMap::new(),
+            git_commits,
+        };
+        let result = resolve_git_ref(
+            "https://github.com/foo/bar.git",
+            None,
+            None,
+            None,
+            &context,
+        )
+        .unwrap();
+        assert_eq!(result, "bare_sha");
+    }
+
+    #[test]
+    fn resolve_git_ref_not_resolved_error() {
+        let context = ResolveContext {
+            registry_versions: BTreeMap::new(),
+            git_commits: BTreeMap::new(),
+        };
+        let err = resolve_git_ref(
+            "https://github.com/foo/bar.git",
+            Some("v999"),
+            None,
+            None,
+            &context,
+        )
+        .unwrap_err();
+        match err {
+            ResolverError::GitRefNotResolved { url, git_ref } => {
+                assert_eq!(url, "https://github.com/foo/bar.git");
+                assert_eq!(git_ref, "v999");
+            }
+            other => panic!("expected GitRefNotResolved, got {:?}", other),
+        }
+    }
+
+    // --- resolve_git_ref_from_context tests ---
+
+    #[test]
+    fn resolve_git_ref_from_context_with_ref() {
+        let mut git_commits = BTreeMap::new();
+        git_commits.insert(
+            "https://github.com/foo/bar.git#v2.0".to_string(),
+            "ctx_sha".to_string(),
+        );
+        let context = ResolveContext {
+            registry_versions: BTreeMap::new(),
+            git_commits,
+        };
+        let result = resolve_git_ref_from_context(
+            "https://github.com/foo/bar.git",
+            Some("v2.0"),
+            &context,
+        )
+        .unwrap();
+        assert_eq!(result, "ctx_sha");
+    }
+
+    #[test]
+    fn resolve_git_ref_from_context_no_ref_uses_head() {
+        let mut git_commits = BTreeMap::new();
+        git_commits.insert(
+            "https://github.com/foo/bar.git#HEAD".to_string(),
+            "head_sha".to_string(),
+        );
+        let context = ResolveContext {
+            registry_versions: BTreeMap::new(),
+            git_commits,
+        };
+        let result =
+            resolve_git_ref_from_context("https://github.com/foo/bar.git", None, &context)
+                .unwrap();
+        assert_eq!(result, "head_sha");
+    }
+
+    #[test]
+    fn resolve_git_ref_from_context_fallback_to_bare_url() {
+        let mut git_commits = BTreeMap::new();
+        git_commits.insert(
+            "https://github.com/foo/bar.git".to_string(),
+            "bare_ctx_sha".to_string(),
+        );
+        let context = ResolveContext {
+            registry_versions: BTreeMap::new(),
+            git_commits,
+        };
+        let result =
+            resolve_git_ref_from_context("https://github.com/foo/bar.git", None, &context)
+                .unwrap();
+        assert_eq!(result, "bare_ctx_sha");
+    }
+
+    #[test]
+    fn resolve_git_ref_from_context_not_found_error() {
+        let context = ResolveContext {
+            registry_versions: BTreeMap::new(),
+            git_commits: BTreeMap::new(),
+        };
+        let err =
+            resolve_git_ref_from_context("https://example.com/repo.git", Some("missing"), &context)
+                .unwrap_err();
+        match err {
+            ResolverError::GitRefNotResolved { url, git_ref } => {
+                assert_eq!(url, "https://example.com/repo.git");
+                assert_eq!(git_ref, "missing");
+            }
+            other => panic!("expected GitRefNotResolved, got {:?}", other),
+        }
+    }
+
+    // --- expand_source_url tests ---
+
+    #[test]
+    fn expand_source_url_github_shorthand() {
+        assert_eq!(
+            expand_source_url("owner/repo"),
+            "https://github.com/owner/repo.git"
+        );
+    }
+
+    #[test]
+    fn expand_source_url_full_url_unchanged() {
+        let url = "https://gitlab.com/org/repo.git";
+        assert_eq!(expand_source_url(url), url);
+    }
+
+    #[test]
+    fn expand_source_url_ssh_unchanged() {
+        let url = "git@github.com:owner/repo.git";
+        assert_eq!(expand_source_url(url), url);
+    }
+
+    #[test]
+    fn expand_source_url_nested_path_unchanged() {
+        // More than one slash — not a GitHub shorthand.
+        let url = "org/sub/repo";
+        assert_eq!(expand_source_url(url), url);
+    }
+
+    #[test]
+    fn expand_source_url_no_slash_unchanged() {
+        // No slash at all.
+        let url = "just-a-name";
+        assert_eq!(expand_source_url(url), url);
+    }
+
+    // --- resolve_single for skills and agents ---
+
+    #[test]
+    fn resolve_single_skill() {
+        let manifest = test_manifest();
+        let context = test_context();
+        let existing = Lockfile::new();
+
+        let updated = resolve_single("local-skill", &manifest, &existing, &context).unwrap();
+        assert_eq!(updated.skills.len(), 1);
+        assert!(updated.skills.contains_key("local-skill"));
+        match &updated.skills["local-skill"].source {
+            LockedSource::Local { local } => assert_eq!(local, "./skills/local-skill"),
+            other => panic!("expected Local source, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn resolve_single_agent() {
+        let manifest = test_manifest();
+        let context = test_context();
+        let existing = Lockfile::new();
+
+        let updated = resolve_single("my-reviewer", &manifest, &existing, &context).unwrap();
+        assert_eq!(updated.agents.len(), 1);
+        assert!(updated.agents.contains_key("my-reviewer"));
+        match &updated.agents["my-reviewer"].source {
+            LockedSource::Local { local } => assert_eq!(local, "./agents/my-reviewer.md"),
+            other => panic!("expected Local source, got {:?}", other),
+        }
+    }
+
+    // --- resolve_path_or_git_dep edge cases ---
+
+    #[test]
+    fn resolve_path_or_git_dep_invalid_source() {
+        let context = ResolveContext {
+            registry_versions: BTreeMap::new(),
+            git_commits: BTreeMap::new(),
+        };
+        // Neither local nor git — should error.
+        let err = resolve_path_or_git_dep(
+            "bad-skill",
+            "skill",
+            false,
+            "non-relative-path",
+            None,       // no git URL
+            None,
+            None,
+            None,
+            &context,
+        )
+        .unwrap_err();
+        match err {
+            ResolverError::InvalidSource { name, reason } => {
+                assert_eq!(name, "bad-skill");
+                assert!(reason.contains("skill"));
+            }
+            other => panic!("expected InvalidSource, got {:?}", other),
+        }
+    }
+
+    // --- resolve_plugin with branch (not tag) ---
+
+    #[test]
+    fn resolve_plugin_git_with_branch() {
+        let manifest: AgentEnvironment = serde_yaml::from_str(
+            r#"
+name: branch-test
+backends:
+  claude-code: {}
+plugins:
+  branch-plugin:
+    git: https://github.com/someone/plugin.git
+    branch: develop
+"#,
+        )
+        .unwrap();
+
+        let mut git_commits = BTreeMap::new();
+        git_commits.insert(
+            "https://github.com/someone/plugin.git#develop".to_string(),
+            "branch_commit".to_string(),
+        );
+
+        let context = ResolveContext {
+            registry_versions: BTreeMap::new(),
+            git_commits,
+        };
+        let plugin_assets = BTreeMap::new();
+
+        let lockfile = resolve_all(&manifest, &context, &plugin_assets).unwrap();
+        let p = &lockfile.plugins["branch-plugin"];
+        assert_eq!(p.git_commit.as_deref(), Some("branch_commit"));
+    }
+
+    // --- conflict detection with skills ---
+
+    #[test]
+    fn conflict_detection_two_plugins_same_skill() {
+        let manifest: AgentEnvironment = serde_yaml::from_str(
+            r#"
+name: skill-conflict
+backends:
+  claude-code: {}
+registries:
+  official:
+    url: https://example.com
+plugins:
+  plugin-a:
+    registry: official
+    version: "^1.0.0"
+  plugin-b:
+    registry: official
+    version: "^1.0.0"
+"#,
+        )
+        .unwrap();
+
+        let context = {
+            let mut rv = BTreeMap::new();
+            let mut official = BTreeMap::new();
+            for name in &["plugin-a", "plugin-b"] {
+                official.insert(
+                    name.to_string(),
+                    vec![PluginVersionInfo {
+                        version: semver::Version::new(1, 0, 0),
+                        git_commit: "x".to_string(),
+                        path: None,
+                        source_kind: None,
+                    }],
+                );
+            }
+            rv.insert("official".to_string(), official);
+            ResolveContext {
+                registry_versions: rv,
+                git_commits: BTreeMap::new(),
+            }
+        };
+
+        let mut plugin_assets = BTreeMap::new();
+        plugin_assets.insert(
+            "plugin-a".to_string(),
+            PluginAssets {
+                agents: vec![],
+                skills: vec!["shared-skill".to_string()],
+            },
+        );
+        plugin_assets.insert(
+            "plugin-b".to_string(),
+            PluginAssets {
+                agents: vec![],
+                skills: vec!["shared-skill".to_string()],
+            },
+        );
+
+        let err = resolve_all(&manifest, &context, &plugin_assets).unwrap_err();
+        match err {
+            ResolverError::Conflict { name, sources } => {
+                assert_eq!(name, "shared-skill");
+                assert_eq!(sources.len(), 2);
+            }
+            other => panic!("expected Conflict error, got {:?}", other),
+        }
+    }
+
+    // --- is_asset_included edge cases ---
+
+    #[test]
+    fn is_asset_included_no_filters() {
+        assert!(is_asset_included("anything", &None, &None, AssetKind::Agent));
+        assert!(is_asset_included("anything", &None, &None, AssetKind::Skill));
+    }
+
+    #[test]
+    fn is_asset_included_include_empty_list() {
+        // Empty include list means "include all" — the asset should be included.
+        let filter = AssetFilter {
+            agents: vec![],
+            skills: vec![],
+        };
+        assert!(is_asset_included("anything", &Some(filter), &None, AssetKind::Agent));
+    }
+
+    #[test]
+    fn is_asset_included_include_filters_agent() {
+        let filter = AssetFilter {
+            agents: vec!["allowed".to_string()],
+            skills: vec![],
+        };
+        assert!(is_asset_included("allowed", &Some(filter.clone()), &None, AssetKind::Agent));
+        assert!(!is_asset_included("denied", &Some(filter), &None, AssetKind::Agent));
+    }
+
+    #[test]
+    fn is_asset_included_include_filters_skill() {
+        let filter = AssetFilter {
+            agents: vec![],
+            skills: vec!["allowed-skill".to_string()],
+        };
+        assert!(is_asset_included("allowed-skill", &Some(filter.clone()), &None, AssetKind::Skill));
+        assert!(!is_asset_included("other-skill", &Some(filter), &None, AssetKind::Skill));
+    }
+
+    #[test]
+    fn is_asset_included_exclude_filters() {
+        let filter = AssetFilter {
+            agents: vec!["blocked".to_string()],
+            skills: vec![],
+        };
+        assert!(!is_asset_included("blocked", &None, &Some(filter.clone()), AssetKind::Agent));
+        assert!(is_asset_included("allowed", &None, &Some(filter), AssetKind::Agent));
+    }
+
+    // --- resolve_plugin with wildcard version constraint ---
+
+    #[test]
+    fn resolve_plugin_wildcard_version() {
+        let manifest: AgentEnvironment = serde_yaml::from_str(
+            r#"
+name: wildcard-test
+backends:
+  claude-code: {}
+registries:
+  official:
+    url: https://example.com
+plugins:
+  any-version:
+    registry: official
+"#,
+        )
+        .unwrap();
+
+        let mut rv = BTreeMap::new();
+        let mut official = BTreeMap::new();
+        official.insert(
+            "any-version".to_string(),
+            vec![
+                PluginVersionInfo {
+                    version: semver::Version::new(1, 0, 0),
+                    git_commit: "old".to_string(),
+                    path: None,
+                    source_kind: None,
+                },
+                PluginVersionInfo {
+                    version: semver::Version::new(3, 0, 0),
+                    git_commit: "newest".to_string(),
+                    path: None,
+                    source_kind: None,
+                },
+            ],
+        );
+        rv.insert("official".to_string(), official);
+
+        let context = ResolveContext {
+            registry_versions: rv,
+            git_commits: BTreeMap::new(),
+        };
+        let plugin_assets = BTreeMap::new();
+
+        let lockfile = resolve_all(&manifest, &context, &plugin_assets).unwrap();
+        let p = &lockfile.plugins["any-version"];
+        match &p.source {
+            LockedSource::Registry {
+                resolved_version, ..
+            } => {
+                assert_eq!(resolved_version, "3.0.0");
+            }
+            other => panic!("expected Registry source, got {:?}", other),
+        }
+    }
+
+    // --- detect_conflicts with missing plugin_assets (no asset info) ---
+
+    #[test]
+    fn detect_conflicts_missing_asset_info_skipped() {
+        let manifest: AgentEnvironment = serde_yaml::from_str(
+            r#"
+name: no-assets
+backends:
+  claude-code: {}
+registries:
+  official:
+    url: https://example.com
+plugins:
+  plugin-a:
+    registry: official
+    version: "^1"
+"#,
+        )
+        .unwrap();
+
+        // No asset info provided — should be skipped, no conflicts.
+        let plugin_assets = BTreeMap::new();
+        let result = detect_conflicts(&manifest, &plugin_assets);
+        assert!(result.is_ok());
+    }
+
+    // --- resolve_single preserves existing entries ---
+
+    #[test]
+    fn resolve_single_preserves_existing_lockfile_entries() {
+        let manifest = test_manifest();
+        let context = test_context();
+
+        // Pre-populate existing lockfile with one plugin
+        let mut existing = Lockfile::new();
+        existing.plugins.insert(
+            "quality-review".to_string(),
+            LockedEntry {
+                source: LockedSource::Registry {
+                    registry: "official".to_string(),
+                    resolved_version: "1.0.0".to_string(),
+                    path: None,
+                },
+                git_commit: Some("aaa111".to_string()),
+                integrity: None,
+            },
+        );
+
+        // Resolve a skill — existing plugin should be preserved
+        let updated = resolve_single("local-skill", &manifest, &existing, &context).unwrap();
+        assert!(updated.plugins.contains_key("quality-review"));
+        assert!(updated.skills.contains_key("local-skill"));
+    }
+
+    // --- GitHub source with no ref (uses HEAD) ---
+
+    #[test]
+    fn resolve_plugin_github_no_ref_uses_head() {
+        use crate::sources::registry::PluginSourceKind;
+
+        let manifest: AgentEnvironment = serde_yaml::from_str(
+            r#"
+name: gh-noref
+backends:
+  claude-code: {}
+registries:
+  official:
+    url: https://example.com
+plugins:
+  gh-plugin:
+    registry: official
+    version: "^1.0.0"
+"#,
+        )
+        .unwrap();
+
+        let mut rv = BTreeMap::new();
+        let mut official = BTreeMap::new();
+        official.insert(
+            "gh-plugin".to_string(),
+            vec![PluginVersionInfo {
+                version: semver::Version::new(1, 0, 0),
+                git_commit: "ignored".to_string(),
+                path: None,
+                source_kind: Some(PluginSourceKind::GitHub {
+                    repo: "owner/repo".to_string(),
+                    git_ref: None,
+                    sha: None,
+                }),
+            }],
+        );
+        rv.insert("official".to_string(), official);
+
+        let mut git_commits = BTreeMap::new();
+        git_commits.insert(
+            "https://github.com/owner/repo.git#HEAD".to_string(),
+            "head_commit".to_string(),
+        );
+
+        let context = ResolveContext {
+            registry_versions: rv,
+            git_commits,
+        };
+        let plugin_assets = BTreeMap::new();
+
+        let lockfile = resolve_all(&manifest, &context, &plugin_assets).unwrap();
+        let p = &lockfile.plugins["gh-plugin"];
+        assert_eq!(p.git_commit.as_deref(), Some("head_commit"));
     }
 }
