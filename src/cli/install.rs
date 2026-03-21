@@ -33,12 +33,21 @@ pub fn run(_args: InstallArgs) -> anyhow::Result<()> {
             cwd.display()
         )
     })?;
+
+    run_install_at(&manifest_path)
+}
+
+/// Run install for a project at a given manifest path.
+///
+/// This is called by `agx install` and also by `agx init` after
+/// scaffolding a new project.
+pub fn run_install_at(manifest_path: &Path) -> anyhow::Result<()> {
     let project_root = manifest_path
         .parent()
         .expect("manifest must have a parent directory")
         .to_path_buf();
 
-    let manifest = manifest::load(&manifest_path)?;
+    let manifest = manifest::load(manifest_path)?;
 
     // Run pre-install hooks
     let hook_cfg = manifest.hooks.as_ref();
@@ -50,7 +59,7 @@ pub fn run(_args: InstallArgs) -> anyhow::Result<()> {
     let lockfile = load_or_lock(&manifest, &project_root, &lockfile_path)?;
 
     // Fetch all remote assets to cache
-    fetch_assets(&lockfile)?;
+    fetch_assets(&manifest, &lockfile)?;
 
     // Run generate for all backends
     run_generate(&manifest, &lockfile, &project_root)?;
@@ -92,30 +101,44 @@ fn load_or_lock(
 }
 
 /// Fetch all remote assets referenced in the lockfile to the global cache.
-fn fetch_assets(lockfile: &Lockfile) -> anyhow::Result<()> {
+fn fetch_assets(manifest: &AgentEnvironment, lockfile: &Lockfile) -> anyhow::Result<()> {
     let git_cache = cache::git_dir()?;
 
     // Fetch plugins
     for (name, entry) in &lockfile.plugins {
         match &entry.source {
             LockedSource::Registry {
-                resolved_version, ..
+                registry,
+                resolved_version,
+                path,
             } => {
                 if cache::get_plugin(name, resolved_version)?.is_some() {
                     continue; // Already cached
                 }
                 if let Some(ref commit) = entry.git_commit {
+                    // Look up the registry URL from the manifest to find the bare repo
+                    let reg_url = manifest
+                        .registries
+                        .get(registry)
+                        .map(|r| r.url.as_str())
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "registry '{}' referenced in lockfile but not found in manifest",
+                                registry
+                            )
+                        })?;
                     eprintln!("fetching plugin '{name}@{resolved_version}'...");
+                    let reg_cache = cache::registry_dir()?;
                     extract_from_git_cache(
-                        &git_cache,
-                        name,
+                        &reg_cache,
+                        reg_url,
                         commit,
-                        None, // plugins: extract whole root
+                        path.as_deref(),
                         &|src| cache::store_plugin(name, resolved_version, src),
                     )?;
                 }
             }
-            LockedSource::Git { git: url, .. } => {
+            LockedSource::Git { git: url, path } => {
                 if let Some(ref commit) = entry.git_commit {
                     // Use commit as version key for git plugins
                     if cache::get_plugin(name, commit)?.is_some() {
@@ -126,10 +149,18 @@ fn fetch_assets(lockfile: &Lockfile) -> anyhow::Result<()> {
                         &git_cache,
                         url,
                         commit,
-                        None,
+                        path.as_deref(),
                         &|src| cache::store_plugin(name, commit, src),
                     )?;
                 }
+            }
+            LockedSource::Npm { package, .. } => {
+                anyhow::bail!(
+                    "npm source '{}' for plugin '{}' is not yet supported; \
+                     install the plugin from git instead",
+                    package,
+                    name
+                );
             }
             LockedSource::Local { .. } => {} // Local assets are read at generate time
         }

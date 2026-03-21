@@ -270,8 +270,9 @@ fn test_registry_fetch_and_lookup() {
         }
     }"#;
 
-    std::fs::write(source.path().join("marketplace.json"), marketplace).unwrap();
-    run_git(source.path(), &["add", "marketplace.json"]);
+    std::fs::create_dir_all(source.path().join(".claude-plugin")).unwrap();
+    std::fs::write(source.path().join(".claude-plugin/marketplace.json"), marketplace).unwrap();
+    run_git(source.path(), &["add", ".claude-plugin/marketplace.json"]);
     run_git(source.path(), &["commit", "-m", "add marketplace"]);
 
     // Fetch the index

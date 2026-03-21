@@ -22,6 +22,8 @@ use agx::manifest::types::{
     RegistryConfig, SkillDependency,
 };
 
+use super::install;
+
 // ---------------------------------------------------------------------------
 // CLI args
 // ---------------------------------------------------------------------------
@@ -35,6 +37,19 @@ pub struct InitArgs {
     /// Scan and print detected config without creating files
     #[arg(long)]
     pub scan_only: bool,
+
+    /// Non-interactive mode: accept defaults (project name from directory,
+    /// claude-code backend, strict isolation, context files created)
+    #[arg(short = 'y', long = "yes")]
+    pub non_interactive: bool,
+
+    /// Project name (used with --yes; defaults to directory name)
+    #[arg(long)]
+    pub name: Option<String>,
+
+    /// Backends to enable (used with --yes; defaults to claude-code)
+    #[arg(long, value_delimiter = ',')]
+    pub backend: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -109,7 +124,10 @@ pub fn run(args: InitArgs) -> Result<()> {
         return Ok(());
     }
 
-    if !args.force && scan.has_detections() {
+    if args.non_interactive {
+        // Non-interactive mode: use defaults or CLI flags.
+        run_non_interactive_flow(&cwd, &args)
+    } else if !args.force && scan.has_detections() {
         // Existing-project flow.
         print_scan_results(&scan);
         run_import_flow(&cwd, &scan)
@@ -117,6 +135,106 @@ pub fn run(args: InitArgs) -> Result<()> {
         // New-project flow (interactive wizard).
         run_new_project_flow(&cwd)
     }
+}
+
+// ===========================================================================
+// Non-interactive mode
+// ===========================================================================
+
+/// Non-interactive init: uses defaults or CLI flags.
+///
+/// Defaults: project name from directory, claude-code backend, strict isolation,
+/// context files created. Override with `--name`, `--backend`.
+fn run_non_interactive_flow(cwd: &Path, args: &InitArgs) -> Result<()> {
+    let dir_name = cwd
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("my-agent-project")
+        .to_string();
+
+    let name = args.name.clone().unwrap_or(dir_name);
+
+    let selected_backends: Vec<String> = if args.backend.is_empty() {
+        vec!["claude-code".to_string()]
+    } else {
+        args.backend.clone()
+    };
+
+    let mut backends = BTreeMap::new();
+    for (i, backend) in selected_backends.iter().enumerate() {
+        backends.insert(
+            backend.clone(),
+            BackendConfig {
+                default: if i == 0 { Some(true) } else { None },
+                isolation: Some(IsolationMode::Strict),
+                model: None,
+            },
+        );
+    }
+
+    let mut overlays = BTreeMap::new();
+    for b in &selected_backends {
+        overlays.insert(b.clone(), format!("./CONTEXT.{b}.md"));
+    }
+    let context = Some(ContextConfig {
+        base: "./CONTEXT.md".to_string(),
+        overlays,
+        children: vec![],
+    });
+
+    let manifest = AgentEnvironment {
+        name,
+        version: Some("0.1.0".to_string()),
+        description: None,
+        backends,
+        registries: BTreeMap::new(),
+        plugins: BTreeMap::new(),
+        skills: BTreeMap::new(),
+        agents: BTreeMap::new(),
+        mcp_servers: BTreeMap::new(),
+        settings: BTreeMap::new(),
+        paths: None,
+        context,
+        hooks: None,
+    };
+
+    let mut created_files = Vec::new();
+
+    write_manifest(cwd, &manifest)?;
+    created_files.push(MANIFEST_FILE.to_string());
+
+    write_context_base(cwd)?;
+    created_files.push("CONTEXT.md".to_string());
+
+    for b in &selected_backends {
+        let filename = format!("CONTEXT.{b}.md");
+        write_context_overlay(cwd, b, &filename)?;
+        created_files.push(filename);
+    }
+
+    let backend_refs: Vec<&str> = selected_backends.iter().map(|s| s.as_str()).collect();
+    update_gitignore(cwd, &backend_refs, true)?;
+    created_files.push(".gitignore".to_string());
+
+    for f in &created_files {
+        println!(
+            "{} {}",
+            style("Created:").green().bold(),
+            f
+        );
+    }
+
+    // Run install to generate backend configs immediately.
+    println!();
+    let manifest_path = cwd.join(MANIFEST_FILE);
+    install::run_install_at(&manifest_path)?;
+
+    println!();
+    println!("Next steps:");
+    println!("  Edit {} to add dependencies", MANIFEST_FILE);
+    println!("  agx run        Launch the default backend");
+
+    Ok(())
 }
 
 // ===========================================================================
@@ -267,10 +385,15 @@ fn run_new_project_flow(cwd: &Path) -> Result<()> {
             f
         );
     }
+
+    // Run install to generate backend configs immediately.
+    println!();
+    let manifest_path = cwd.join(MANIFEST_FILE);
+    install::run_install_at(&manifest_path)?;
+
     println!();
     println!("Next steps:");
     println!("  Edit {} to add dependencies", MANIFEST_FILE);
-    println!("  agx install    Resolve, download, and generate configs");
     println!("  agx run        Launch the default backend");
 
     Ok(())
@@ -430,6 +553,11 @@ fn run_import_flow(cwd: &Path, scan: &ScanResult) -> Result<()> {
         );
     }
 
+    // Run install to generate backend configs immediately.
+    println!();
+    let manifest_path = cwd.join(MANIFEST_FILE);
+    install::run_install_at(&manifest_path)?;
+
     println!();
     println!(
         "{}",
@@ -444,7 +572,6 @@ fn run_import_flow(cwd: &Path, scan: &ScanResult) -> Result<()> {
     println!();
     println!("Next steps:");
     println!("  agx check       Validate the generated manifest");
-    println!("  agx generate    Regenerate configs from the new manifest");
     println!("  agx run         Launch in the managed environment");
 
     Ok(())

@@ -129,6 +129,7 @@ fn find_outdated(
             LockedSource::Registry {
                 registry,
                 resolved_version,
+                ..
             } => (registry.as_str(), resolved_version.as_str()),
             _ => continue,
         };
@@ -317,6 +318,7 @@ plugins:
             LockedPlugin {
                 source: LockedSource::Registry {
                     registry: "official".to_string(),
+                    path: None,
                     resolved_version: "1.2.0".to_string(),
                 },
                 git_commit: Some("bbb".to_string()),
@@ -344,6 +346,7 @@ plugins:
             LockedPlugin {
                 source: LockedSource::Registry {
                     registry: "official".to_string(),
+                    path: None,
                     resolved_version: "0.6.0".to_string(),
                 },
                 git_commit: Some("fff".to_string()),
@@ -400,6 +403,7 @@ plugins:
             LockedPlugin {
                 source: LockedSource::Registry {
                     registry: "official".to_string(),
+                    path: None,
                     resolved_version: "1.0.0".to_string(),
                 },
                 git_commit: None,
@@ -411,6 +415,7 @@ plugins:
             LockedPlugin {
                 source: LockedSource::Registry {
                     registry: "official".to_string(),
+                    path: None,
                     resolved_version: "0.5.0".to_string(),
                 },
                 git_commit: None,

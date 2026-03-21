@@ -5,6 +5,7 @@ use agx::config;
 use agx::lockfile;
 use agx::manifest;
 use agx::resolver::{self, PluginVersionInfo, ResolveContext};
+use agx::sources::registry::PluginSourceKind;
 use agx::sources::{git, registry};
 use anyhow::Context;
 use clap::Args;
@@ -102,6 +103,8 @@ fn build_resolve_context(
                     Some(PluginVersionInfo {
                         version,
                         git_commit: detail.commit.clone(),
+                        path: detail.path.clone(),
+                        source_kind: detail.source_kind.clone(),
                     })
                 })
                 .collect();
@@ -114,6 +117,39 @@ fn build_resolve_context(
     // Collect all unique git URLs and their refs
     let mut git_refs_to_resolve: Vec<(String, Option<String>)> = Vec::new();
 
+    // 2a. Collect git URLs from registry plugin source kinds
+    // (GitHub, GitUrl, GitSubdir plugins that live outside the registry repo)
+    for plugin_map in registry_versions.values() {
+        for versions in plugin_map.values() {
+            for info in versions {
+                if let Some(ref sk) = info.source_kind {
+                    match sk {
+                        PluginSourceKind::GitHub { repo, git_ref, sha } => {
+                            if sha.is_none() {
+                                let url = format!("https://github.com/{}.git", repo);
+                                git_refs_to_resolve.push((url, git_ref.clone()));
+                            }
+                        }
+                        PluginSourceKind::GitUrl { url, git_ref, sha } => {
+                            if sha.is_none() {
+                                git_refs_to_resolve.push((url.clone(), git_ref.clone()));
+                            }
+                        }
+                        PluginSourceKind::GitSubdir { url, git_ref, sha, .. } => {
+                            if sha.is_none() {
+                                let expanded = expand_git_url(url);
+                                git_refs_to_resolve.push((expanded, git_ref.clone()));
+                            }
+                        }
+                        PluginSourceKind::RegistryLocal { .. }
+                        | PluginSourceKind::Npm { .. } => {}
+                    }
+                }
+            }
+        }
+    }
+
+    // 2b. Collect git URLs from manifest-level dependencies
     for dep in manifest.plugins.values() {
         if let Some(ref url) = dep.git {
             let git_ref = dep
@@ -197,6 +233,16 @@ fn build_resolve_context(
         registry_versions,
         git_commits,
     })
+}
+
+/// Expand a git URL that might be a GitHub `owner/repo` shorthand.
+fn expand_git_url(url: &str) -> String {
+    // If it looks like a shorthand (no protocol, no dots before /), expand to https
+    if !url.contains("://") && !url.contains('@') && url.matches('/').count() == 1 {
+        format!("https://github.com/{}.git", url)
+    } else {
+        url.to_string()
+    }
 }
 
 #[cfg(test)]

@@ -289,6 +289,9 @@ fn format_locked_info(source: &lockfile::types::LockedSource, commit: Option<&st
             parts.push(format!("resolved: {resolved_version}"));
         }
         LockedSource::Git { .. } => {}
+        LockedSource::Npm { package, .. } => {
+            parts.push(format!("npm: {package}"));
+        }
         LockedSource::Local { .. } => {}
     }
     if let Some(sha) = commit {

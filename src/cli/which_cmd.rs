@@ -169,6 +169,7 @@ mod tests {
         let source = LockedSource::Registry {
             registry: "official".to_string(),
             resolved_version: "1.2.0".to_string(),
+            path: None,
         };
         match &source {
             LockedSource::Registry { resolved_version, .. } => {

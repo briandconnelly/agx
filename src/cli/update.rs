@@ -126,6 +126,8 @@ fn build_resolve_context(manifest: &AgentEnvironment) -> anyhow::Result<ResolveC
                             Some(PluginVersionInfo {
                                 version,
                                 git_commit: detail.commit.clone(),
+                                path: detail.path.clone(),
+                                source_kind: detail.source_kind.clone(),
                             })
                         })
                         .collect();
@@ -289,6 +291,12 @@ impl HasVersion for agx::lockfile::types::LockedPlugin {
                 .as_deref()
                 .map(|c| format!("{}#{}", git, &c[..7.min(c.len())]))
                 .unwrap_or_else(|| git.clone()),
+            LockedSource::Npm { package, resolved_version, .. } => {
+                resolved_version.as_deref().map_or_else(
+                    || package.clone(),
+                    |v| format!("{package}@{v}"),
+                )
+            }
             LockedSource::Local { local } => local.clone(),
         }
     }
@@ -305,6 +313,12 @@ impl HasVersion for agx::lockfile::types::LockedSkill {
                 .as_deref()
                 .map(|c| format!("{}#{}", git, &c[..7.min(c.len())]))
                 .unwrap_or_else(|| git.clone()),
+            LockedSource::Npm { package, resolved_version, .. } => {
+                resolved_version.as_deref().map_or_else(
+                    || package.clone(),
+                    |v| format!("{package}@{v}"),
+                )
+            }
             LockedSource::Local { local } => local.clone(),
         }
     }
@@ -321,6 +335,12 @@ impl HasVersion for agx::lockfile::types::LockedAgent {
                 .as_deref()
                 .map(|c| format!("{}#{}", git, &c[..7.min(c.len())]))
                 .unwrap_or_else(|| git.clone()),
+            LockedSource::Npm { package, resolved_version, .. } => {
+                resolved_version.as_deref().map_or_else(
+                    || package.clone(),
+                    |v| format!("{package}@{v}"),
+                )
+            }
             LockedSource::Local { local } => local.clone(),
         }
     }
@@ -340,6 +360,7 @@ mod tests {
             LockedPlugin {
                 source: LockedSource::Registry {
                     registry: "official".to_string(),
+                    path: None,
                     resolved_version: "1.0.0".to_string(),
                 },
                 git_commit: None,
@@ -364,6 +385,7 @@ mod tests {
             LockedPlugin {
                 source: LockedSource::Registry {
                     registry: "official".to_string(),
+                    path: None,
                     resolved_version: "1.0.0".to_string(),
                 },
                 git_commit: None,
@@ -388,6 +410,7 @@ mod tests {
             LockedPlugin {
                 source: LockedSource::Registry {
                     registry: "official".to_string(),
+                    path: None,
                     resolved_version: "1.0.0".to_string(),
                 },
                 git_commit: None,
@@ -400,6 +423,7 @@ mod tests {
             LockedPlugin {
                 source: LockedSource::Registry {
                     registry: "official".to_string(),
+                    path: None,
                     resolved_version: "1.5.0".to_string(),
                 },
                 git_commit: None,
@@ -425,6 +449,7 @@ mod tests {
             LockedPlugin {
                 source: LockedSource::Registry {
                     registry: "official".to_string(),
+                    path: None,
                     resolved_version: "1.0.0".to_string(),
                 },
                 git_commit: None,
@@ -446,6 +471,7 @@ mod tests {
             LockedPlugin {
                 source: LockedSource::Registry {
                     registry: "r".to_string(),
+                    path: None,
                     resolved_version: "1.0.0".to_string(),
                 },
                 git_commit: None,
@@ -457,6 +483,7 @@ mod tests {
             LockedPlugin {
                 source: LockedSource::Registry {
                     registry: "r".to_string(),
+                    path: None,
                     resolved_version: "2.0.0".to_string(),
                 },
                 git_commit: None,
@@ -470,6 +497,7 @@ mod tests {
             LockedPlugin {
                 source: LockedSource::Registry {
                     registry: "r".to_string(),
+                    path: None,
                     resolved_version: "1.2.0".to_string(),
                 },
                 git_commit: None,
@@ -481,6 +509,7 @@ mod tests {
             LockedPlugin {
                 source: LockedSource::Registry {
                     registry: "r".to_string(),
+                    path: None,
                     resolved_version: "3.0.0".to_string(),
                 },
                 git_commit: None,

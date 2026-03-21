@@ -10,6 +10,7 @@ use agx::lockfile;
 use agx::lockfile::types::{LockedSource, Lockfile};
 use agx::manifest;
 use agx::manifest::types::AgentEnvironment;
+use agx::sources::registry;
 
 #[derive(Debug, Args)]
 pub struct InfoArgs {
@@ -158,7 +159,54 @@ fn print_plugin_info(
         }
     }
 
+    // Registry metadata (fetch if available)
+    if let Some(reg_name) = plugin.registry.as_deref() {
+        if let Some(reg_config) = manifest.registries.get(reg_name) {
+            let reg_cache = cache::registry_dir().ok();
+            if let Some(ref reg_cache_dir) = reg_cache {
+                let slug = agx::sources::git::url_to_slug(&reg_config.url);
+                let reg_dir = reg_cache_dir.join(&slug);
+                if reg_dir.exists() {
+                    if let Ok(index) = registry::fetch_index_pinned(
+                        &reg_config.url,
+                        &reg_dir,
+                        reg_config.pin.as_deref(),
+                    ) {
+                        if let Some(entry) = index.plugins.get(name) {
+                            print_registry_metadata(entry);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     Ok(())
+}
+
+/// Print enriched metadata from a registry plugin entry.
+fn print_registry_metadata(entry: &registry::PluginEntry) {
+    if let Some(ref author) = entry.author {
+        print_field("Author", author);
+    }
+    if let Some(ref homepage) = entry.homepage {
+        print_field("Homepage", homepage);
+    }
+    if let Some(ref repository) = entry.repository {
+        print_field("Repository", repository);
+    }
+    if let Some(ref license) = entry.license {
+        print_field("License", license);
+    }
+    if let Some(ref category) = entry.category {
+        print_field("Category", category);
+    }
+    if !entry.keywords.is_empty() {
+        print_field("Keywords", &entry.keywords.join(", "));
+    }
+    if !entry.tags.is_empty() {
+        print_field("Tags", &entry.tags.join(", "));
+    }
 }
 
 /// Print info for a skill dependency.
@@ -302,6 +350,7 @@ agents:
                 source: LockedSource::Registry {
                     registry: "official".to_string(),
                     resolved_version: "1.2.0".to_string(),
+                    path: None,
                 },
                 git_commit: Some("a1b2c3d4e5f6".to_string()),
                 integrity: Some("sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b".to_string()),

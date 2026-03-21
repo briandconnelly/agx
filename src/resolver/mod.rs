@@ -17,6 +17,10 @@ pub struct PluginVersionInfo {
     pub version: semver::Version,
     /// The git commit SHA corresponding to this version.
     pub git_commit: String,
+    /// Path within the registry repo (if any).
+    pub path: Option<String>,
+    /// How to fetch this plugin (None for legacy/registry-local entries).
+    pub source_kind: Option<crate::sources::registry::PluginSourceKind>,
 }
 
 /// Pre-fetched data needed for resolution.
@@ -153,12 +157,81 @@ fn resolve_plugin(
             .find(|v| v.version == best)
             .expect("version was in the list");
 
+        // Determine the locked source based on the plugin's source kind.
+        // Registry-local plugins use LockedSource::Registry; external git
+        // sources are expanded to LockedSource::Git; npm uses LockedSource::Npm.
+        use crate::sources::registry::PluginSourceKind;
+        let (source, git_commit) = match &info.source_kind {
+            Some(PluginSourceKind::GitHub { repo, git_ref, sha }) => {
+                let url = format!("https://github.com/{}.git", repo);
+                let commit = if let Some(s) = sha {
+                    s.clone()
+                } else {
+                    resolve_git_ref_from_context(&url, git_ref.as_deref(), context)?
+                };
+                (
+                    LockedSource::Git {
+                        git: url,
+                        path: None,
+                    },
+                    Some(commit),
+                )
+            }
+            Some(PluginSourceKind::GitUrl { url, git_ref, sha }) => {
+                let commit = if let Some(s) = sha {
+                    s.clone()
+                } else {
+                    resolve_git_ref_from_context(url, git_ref.as_deref(), context)?
+                };
+                (
+                    LockedSource::Git {
+                        git: url.clone(),
+                        path: None,
+                    },
+                    Some(commit),
+                )
+            }
+            Some(PluginSourceKind::GitSubdir { url, path, git_ref, sha }) => {
+                let expanded = expand_source_url(url);
+                let commit = if let Some(s) = sha {
+                    s.clone()
+                } else {
+                    resolve_git_ref_from_context(&expanded, git_ref.as_deref(), context)?
+                };
+                (
+                    LockedSource::Git {
+                        git: expanded,
+                        path: Some(path.clone()),
+                    },
+                    Some(commit),
+                )
+            }
+            Some(PluginSourceKind::Npm { package, version, registry }) => {
+                (
+                    LockedSource::Npm {
+                        package: package.clone(),
+                        resolved_version: version.clone(),
+                        npm_registry: registry.clone(),
+                    },
+                    None,
+                )
+            }
+            Some(PluginSourceKind::RegistryLocal { .. }) | None => {
+                // Standard registry-local plugin
+                (
+                    LockedSource::Registry {
+                        registry: registry_name.to_string(),
+                        resolved_version: best.to_string(),
+                        path: info.path.clone(),
+                    },
+                    Some(info.git_commit.clone()),
+                )
+            }
+        };
+
         Ok(LockedPlugin {
-            source: LockedSource::Registry {
-                registry: registry_name.to_string(),
-                resolved_version: best.to_string(),
-            },
-            git_commit: Some(info.git_commit.clone()),
+            source,
+            git_commit,
             integrity: None,
         })
     } else if dep.is_git() {
@@ -276,6 +349,37 @@ fn resolve_git_ref(
             url: git_url.to_string(),
             git_ref: ref_str.to_string(),
         })
+}
+
+/// Look up a git commit from the resolve context for a URL + optional ref.
+///
+/// Used by registry plugins with external git sources (GitHub, GitUrl, GitSubdir).
+fn resolve_git_ref_from_context(
+    url: &str,
+    git_ref: Option<&str>,
+    context: &ResolveContext,
+) -> Result<String, ResolverError> {
+    let ref_str = git_ref.unwrap_or("HEAD");
+    let lookup_key = format!("{url}#{ref_str}");
+
+    context
+        .git_commits
+        .get(&lookup_key)
+        .or_else(|| context.git_commits.get(url))
+        .cloned()
+        .ok_or_else(|| ResolverError::GitRefNotResolved {
+            url: url.to_string(),
+            git_ref: ref_str.to_string(),
+        })
+}
+
+/// Expand a git URL that might be a GitHub `owner/repo` shorthand.
+fn expand_source_url(url: &str) -> String {
+    if !url.contains("://") && !url.contains('@') && url.matches('/').count() == 1 {
+        format!("https://github.com/{}.git", url)
+    } else {
+        url.to_string()
+    }
 }
 
 /// Detect asset name conflicts across plugins.
@@ -431,18 +535,26 @@ agents:
                 PluginVersionInfo {
                     version: semver::Version::new(1, 0, 0),
                     git_commit: "aaa111".to_string(),
+                    path: None,
+                    source_kind: None,
                 },
                 PluginVersionInfo {
                     version: semver::Version::new(1, 2, 0),
                     git_commit: "bbb222".to_string(),
+                    path: None,
+                    source_kind: None,
                 },
                 PluginVersionInfo {
                     version: semver::Version::new(1, 5, 0),
                     git_commit: "ccc333".to_string(),
+                    path: None,
+                    source_kind: None,
                 },
                 PluginVersionInfo {
                     version: semver::Version::new(2, 0, 0),
                     git_commit: "ddd444".to_string(),
+                    path: None,
+                    source_kind: None,
                 },
             ],
         );
@@ -478,6 +590,7 @@ agents:
             LockedSource::Registry {
                 registry,
                 resolved_version,
+                ..
             } => {
                 assert_eq!(registry, "official");
                 assert_eq!(resolved_version, "1.5.0");
@@ -557,6 +670,8 @@ plugins:
                 vec![PluginVersionInfo {
                     version: semver::Version::new(1, 0, 0),
                     git_commit: "a1".to_string(),
+                    path: None,
+                    source_kind: None,
                 }],
             );
             official.insert(
@@ -564,6 +679,8 @@ plugins:
                 vec![PluginVersionInfo {
                     version: semver::Version::new(1, 0, 0),
                     git_commit: "b1".to_string(),
+                    path: None,
+                    source_kind: None,
                 }],
             );
             rv.insert("official".to_string(), official);
@@ -633,6 +750,8 @@ plugins:
                 vec![PluginVersionInfo {
                     version: semver::Version::new(1, 0, 0),
                     git_commit: "a1".to_string(),
+                    path: None,
+                    source_kind: None,
                 }],
             );
             official.insert(
@@ -640,6 +759,8 @@ plugins:
                 vec![PluginVersionInfo {
                     version: semver::Version::new(1, 0, 0),
                     git_commit: "b1".to_string(),
+                    path: None,
+                    source_kind: None,
                 }],
             );
             rv.insert("official".to_string(), official);
@@ -706,6 +827,8 @@ plugins:
                 vec![PluginVersionInfo {
                     version: semver::Version::new(1, 0, 0),
                     git_commit: "a1".to_string(),
+                    path: None,
+                    source_kind: None,
                 }],
             );
             official.insert(
@@ -713,6 +836,8 @@ plugins:
                 vec![PluginVersionInfo {
                     version: semver::Version::new(1, 0, 0),
                     git_commit: "b1".to_string(),
+                    path: None,
+                    source_kind: None,
                 }],
             );
             rv.insert("official".to_string(), official);
@@ -827,6 +952,8 @@ plugins:
             vec![PluginVersionInfo {
                 version: semver::Version::new(1, 0, 0),
                 git_commit: "x".to_string(),
+                path: None,
+                source_kind: None,
             }],
         );
         rv.insert("official".to_string(), official);

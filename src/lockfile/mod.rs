@@ -181,6 +181,7 @@ agx_version: "99.0.0"
                 source: LockedSource::Registry {
                     registry: "r".to_string(),
                     resolved_version: "1.0.0".to_string(),
+                    path: None,
                 },
                 git_commit: None,
                 integrity: None,
@@ -220,6 +221,7 @@ agx_version: "99.0.0"
                 source: LockedSource::Registry {
                     registry: "r".to_string(),
                     resolved_version: "1.0.0".to_string(),
+                    path: None,
                 },
                 git_commit: None,
                 integrity: None,

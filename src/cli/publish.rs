@@ -203,6 +203,14 @@ fn update_index(
         .or_insert_with(|| PluginEntry {
             description: description.clone().unwrap_or_default(),
             versions: BTreeMap::new(),
+            author: None,
+            homepage: None,
+            repository: None,
+            license: None,
+            keywords: Vec::new(),
+            tags: Vec::new(),
+            category: None,
+            strict: None,
         });
 
     // Update description if it changed
@@ -215,6 +223,7 @@ fn update_index(
         VersionDetail {
             commit: commit.to_string(),
             path: None,
+            source_kind: None,
         },
     );
 }
@@ -410,6 +419,7 @@ mod tests {
             VersionDetail {
                 commit: "abc123".to_string(),
                 path: None,
+                source_kind: None,
             },
         );
         index.plugins.insert(
@@ -417,6 +427,14 @@ mod tests {
             PluginEntry {
                 description: "test".to_string(),
                 versions,
+                author: None,
+                homepage: None,
+                repository: None,
+                license: None,
+                keywords: Vec::new(),
+                tags: Vec::new(),
+                category: None,
+                strict: None,
             },
         );
         assert!(validate_version_not_exists(&index, "my-plugin", "2.0.0").is_ok());
@@ -433,6 +451,7 @@ mod tests {
             VersionDetail {
                 commit: "abc123".to_string(),
                 path: None,
+                source_kind: None,
             },
         );
         index.plugins.insert(
@@ -440,6 +459,14 @@ mod tests {
             PluginEntry {
                 description: "test".to_string(),
                 versions,
+                author: None,
+                homepage: None,
+                repository: None,
+                license: None,
+                keywords: Vec::new(),
+                tags: Vec::new(),
+                category: None,
+                strict: None,
             },
         );
         let result = validate_version_not_exists(&index, "my-plugin", "1.0.0");
@@ -474,6 +501,7 @@ mod tests {
             VersionDetail {
                 commit: "abc123".to_string(),
                 path: None,
+                source_kind: None,
             },
         );
         index.plugins.insert(
@@ -481,6 +509,14 @@ mod tests {
             PluginEntry {
                 description: "old description".to_string(),
                 versions,
+                author: None,
+                homepage: None,
+                repository: None,
+                license: None,
+                keywords: Vec::new(),
+                tags: Vec::new(),
+                category: None,
+                strict: None,
             },
         );
 
