@@ -1,3 +1,7 @@
+---
+name: deploy-checklist
+description: Verify deployment readiness by checking tests, environment variables, and database migrations.
+---
 # Deploy Checklist
 
 A skill for verifying deployment readiness.

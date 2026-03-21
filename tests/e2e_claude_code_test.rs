@@ -80,7 +80,7 @@ fn setup_project(dir: &Path, manifest_yaml: &str) {
         fs::create_dir_all(&skill_dir).unwrap();
         fs::write(
             skill_dir.join("SKILL.md"),
-            format!("# {name}\nThis is the {name} skill.\n"),
+            format!("---\nname: {name}\ndescription: The {name} skill for testing.\n---\n# {name}\nThis is the {name} skill.\n"),
         )
         .unwrap();
     }
