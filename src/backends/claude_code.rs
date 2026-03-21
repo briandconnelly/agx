@@ -30,7 +30,7 @@ impl Backend for ClaudeCodeBackend {
         let settings = manifest.settings.get("claude-code");
 
         // Generate .claude/settings.json
-        generate_settings(backend_config, settings, output_dir)
+        generate_settings(backend_config, settings, &manifest.name, output_dir)
             .context("generating .claude/settings.json")?;
 
         // Generate .claude/agents/*.md
@@ -80,6 +80,7 @@ impl Backend for ClaudeCodeBackend {
 fn generate_settings(
     backend_config: Option<&BackendConfig>,
     settings: Option<&serde_yaml::Value>,
+    project_name: &str,
     output_dir: &Path,
 ) -> Result<()> {
     let mut obj = Map::new();
@@ -87,6 +88,17 @@ fn generate_settings(
         "_generated_by".to_string(),
         Value::String(GENERATED_MARKER.to_string()),
     );
+
+    // Set AGX_PROJECT so skills/hooks can detect the agx-managed project.
+    let env_obj = obj
+        .entry("environment".to_string())
+        .or_insert_with(|| json!({}));
+    if let Value::Object(env_map) = env_obj {
+        env_map.insert(
+            "AGX_PROJECT".to_string(),
+            json!(project_name),
+        );
+    }
 
     let isolation = backend_config
         .and_then(|c| c.isolation.clone())
@@ -224,12 +236,13 @@ backends:
             isolation: Some(IsolationMode::Strict),
             model: None,
         };
-        generate_settings(Some(&config), None, dir.path()).unwrap();
+        generate_settings(Some(&config), None, "test-project", dir.path()).unwrap();
 
         let content = fs::read_to_string(dir.path().join(".claude/settings.json")).unwrap();
         let parsed: Value = serde_json::from_str(&content).unwrap();
 
         assert_eq!(parsed["_generated_by"], GENERATED_MARKER);
+        assert_eq!(parsed["environment"]["AGX_PROJECT"], "test-project");
         assert_eq!(
             parsed["environment"]["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"],
             "1"
@@ -244,12 +257,14 @@ backends:
             isolation: Some(IsolationMode::Permissive),
             model: None,
         };
-        generate_settings(Some(&config), None, dir.path()).unwrap();
+        generate_settings(Some(&config), None, "test-project", dir.path()).unwrap();
 
         let content = fs::read_to_string(dir.path().join(".claude/settings.json")).unwrap();
         let parsed: Value = serde_json::from_str(&content).unwrap();
 
-        assert!(parsed.get("environment").is_none());
+        // Permissive mode should have AGX_PROJECT but NOT the strict isolation flags.
+        assert_eq!(parsed["environment"]["AGX_PROJECT"], "test-project");
+        assert!(parsed["environment"].get("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS").is_none());
     }
 
     #[test]
@@ -260,7 +275,7 @@ backends:
             isolation: Some(IsolationMode::Strict),
             model: Some(ModelSpec::Simple("sonnet".to_string())),
         };
-        generate_settings(Some(&config), None, dir.path()).unwrap();
+        generate_settings(Some(&config), None, "test-project", dir.path()).unwrap();
 
         let content = fs::read_to_string(dir.path().join(".claude/settings.json")).unwrap();
         let parsed: Value = serde_json::from_str(&content).unwrap();
@@ -283,7 +298,7 @@ backends:
                 parameters: BTreeMap::new(),
             })),
         };
-        generate_settings(Some(&config), None, dir.path()).unwrap();
+        generate_settings(Some(&config), None, "test-project", dir.path()).unwrap();
 
         let content = fs::read_to_string(dir.path().join(".claude/settings.json")).unwrap();
         let parsed: Value = serde_json::from_str(&content).unwrap();
@@ -312,7 +327,7 @@ permissions:
         )
         .unwrap();
 
-        generate_settings(Some(&config), Some(&yaml_settings), dir.path()).unwrap();
+        generate_settings(Some(&config), Some(&yaml_settings), "test-project", dir.path()).unwrap();
 
         let content = fs::read_to_string(dir.path().join(".claude/settings.json")).unwrap();
         let parsed: Value = serde_json::from_str(&content).unwrap();
