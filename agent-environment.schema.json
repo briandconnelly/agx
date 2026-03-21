@@ -72,9 +72,12 @@
     "context": {
       "$ref": "#/$defs/ContextConfig"
     },
+    "hooks": {
+      "$ref": "#/$defs/HooksConfig"
+    },
     "env-file": {
       "type": "string",
-      "description": "Path to a .env file to load when running backends."
+      "description": "Path to a relative .env file to load when running backends."
     }
   },
   "$defs": {
@@ -82,7 +85,7 @@
       "type": "object",
       "properties": {
         "default": { "type": "boolean" },
-        "isolation": { "type": "string", "enum": ["strict", "permissive"] },
+        "isolation": { "type": "string", "enum": ["permissive", "strict", "bare"] },
         "model": {
           "oneOf": [
             { "type": "string" },
@@ -189,6 +192,15 @@
             }
           }
         }
+      }
+    },
+    "HooksConfig": {
+      "type": "object",
+      "properties": {
+        "pre-install": { "type": "array", "items": { "type": "string" } },
+        "post-install": { "type": "array", "items": { "type": "string" } },
+        "pre-generate": { "type": "array", "items": { "type": "string" } },
+        "post-generate": { "type": "array", "items": { "type": "string" } }
       }
     }
   }

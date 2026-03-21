@@ -275,19 +275,20 @@ backends:
 "#,
     );
 
-    // Verify settings.json has strict isolation flags
+    // Verify settings.json has AGX_PROJECT env var (strict isolation is now
+    // enforced via CLI flags like --setting-sources project, not env vars).
     let settings = fs::read_to_string(tmp.path().join(".claude/settings.json")).unwrap();
-    assert!(settings.contains("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"));
+    assert!(settings.contains("AGX_PROJECT"));
 
-    // Verify Claude sees the env var
+    // Verify Claude sees the AGX_PROJECT env var
     let response = ask_claude(
         tmp.path(),
-        "Run: echo $CLAUDE_CODE_DISABLE_BACKGROUND_TASKS — reply with ONLY the output value.",
+        "Run: echo $AGX_PROJECT — reply with ONLY the output value.",
     );
 
     assert!(
-        response.contains("1"),
-        "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS should be '1'. Got: {response}"
+        response.contains("strict-iso-test"),
+        "AGX_PROJECT should be 'strict-iso-test'. Got: {response}"
     );
 }
 

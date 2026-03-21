@@ -164,11 +164,8 @@ fn format_backend(_name: &str, cfg: &BackendConfig) -> FormattedItem {
     let isolation = cfg
         .isolation
         .as_ref()
-        .map(|i| match i {
-            IsolationMode::Strict => "strict",
-            IsolationMode::Permissive => "permissive",
-        })
-        .unwrap_or("strict");
+        .map(|i| i.to_string())
+        .unwrap_or_else(|| "strict".to_string());
 
     let model_str = cfg.model.as_ref().map(|m| match m {
         ModelSpec::Simple(s) => format!(", model: {s}"),
@@ -325,11 +322,8 @@ fn print_dot(env: &AgentEnvironment) {
             let isolation = cfg
                 .isolation
                 .as_ref()
-                .map(|i| match i {
-                    IsolationMode::Strict => "strict",
-                    IsolationMode::Permissive => "permissive",
-                })
-                .unwrap_or("strict");
+                .map(|i| i.to_string())
+                .unwrap_or_else(|| "strict".to_string());
             println!("  {node_id} [label=\"{name}\\n({isolation})\"];");
             println!("  root -> {node_id};");
         }
@@ -458,11 +452,8 @@ fn build_tree_string(env: &AgentEnvironment) -> String {
                     let isolation = cfg
                         .isolation
                         .as_ref()
-                        .map(|i| match i {
-                            IsolationMode::Strict => "strict",
-                            IsolationMode::Permissive => "permissive",
-                        })
-                        .unwrap_or("strict");
+                        .map(|i| i.to_string())
+                        .unwrap_or_else(|| "strict".to_string());
                     let model_str = cfg.model.as_ref().map(|m| match m {
                         ModelSpec::Simple(s) => format!(", model: {s}"),
                         ModelSpec::Full(f) => format!(", model: {}", f.id),
@@ -563,11 +554,8 @@ fn build_dot_string(env: &AgentEnvironment) -> String {
             let isolation = cfg
                 .isolation
                 .as_ref()
-                .map(|i| match i {
-                    IsolationMode::Strict => "strict",
-                    IsolationMode::Permissive => "permissive",
-                })
-                .unwrap_or("strict");
+                .map(|i| i.to_string())
+                .unwrap_or_else(|| "strict".to_string());
             out.push_str(&format!("  {node_id} [label=\"{name}\\n({isolation})\"];\n"));
             out.push_str(&format!("  root -> {node_id};\n"));
         }

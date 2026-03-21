@@ -84,11 +84,8 @@ pub fn run(_args: BackendsArgs) -> Result<()> {
 }
 
 /// Convert isolation mode to display string.
-fn isolation_str(mode: &IsolationMode) -> &'static str {
-    match mode {
-        IsolationMode::Strict => "strict",
-        IsolationMode::Permissive => "permissive",
-    }
+fn isolation_str(mode: &IsolationMode) -> String {
+    mode.to_string()
 }
 
 #[cfg(test)]

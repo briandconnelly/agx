@@ -274,7 +274,7 @@ fn run_new_project_flow(cwd: &Path) -> Result<()> {
         .collect();
 
     // 3. Isolation mode
-    let isolation_options = &["strict", "permissive"];
+    let isolation_options = &["strict", "permissive", "bare"];
     let isolation_idx = Select::new()
         .with_prompt("Default isolation mode")
         .items(isolation_options)
@@ -283,6 +283,7 @@ fn run_new_project_flow(cwd: &Path) -> Result<()> {
         .context("isolation mode prompt")?;
     let isolation = match isolation_options[isolation_idx] {
         "strict" => IsolationMode::Strict,
+        "bare" => IsolationMode::Bare,
         _ => IsolationMode::Permissive,
     };
 

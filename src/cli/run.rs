@@ -1,5 +1,7 @@
 //! `agx run` — launch a backend in the managed environment.
 
+use std::path::PathBuf;
+
 use anyhow::{bail, Context};
 use clap::Args;
 use console::style;
@@ -24,7 +26,7 @@ pub struct RunArgs {
 
     /// Path to a .env file to load into the backend process
     #[arg(long)]
-    pub env_file: Option<String>,
+    pub env_file: Option<PathBuf>,
 
     /// Arguments to pass through to the backend
     #[arg(last = true)]
@@ -87,14 +89,21 @@ pub fn run(args: RunArgs) -> anyhow::Result<()> {
     }
 
     // 7. Load env file (CLI flag takes precedence over manifest field).
-    let env_file_path = args
+    let env_file_rel = args
         .env_file
         .as_deref()
-        .or(manifest.env_file.as_deref());
-    if let Some(env_path) = env_file_path {
-        let path = project_root.join(env_path);
-        let vars = agx::env_file::parse(&path)
-            .with_context(|| format!("loading env file '{}'", env_path))?;
+        .map(std::path::Path::new)
+        .or_else(|| manifest.env_file.as_deref().map(std::path::Path::new));
+    if let Some(rel_path) = env_file_rel {
+        if rel_path.is_absolute() {
+            bail!(
+                "env-file path must be relative to project root, got '{}'",
+                rel_path.display()
+            );
+        }
+        let full_path = project_root.join(rel_path);
+        let vars = agx::env_file::parse(&full_path)
+            .with_context(|| format!("loading env file '{}'", rel_path.display()))?;
         cmd.envs(vars);
     }
 
@@ -483,5 +492,53 @@ backends:
         let args: Vec<_> = cmd.get_args().map(|a| a.to_string_lossy().to_string()).collect();
         assert!(args.contains(&"--verbose".to_string()));
         assert!(args.contains(&"--no-color".to_string()));
+    }
+
+    #[test]
+    fn env_file_vars_injected_into_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let env_path = dir.path().join(".env");
+        std::fs::write(&env_path, "MY_VAR=hello\nOTHER=world\n").unwrap();
+
+        let config = BackendConfig {
+            default: None,
+            isolation: None,
+            model: None,
+        };
+        let backend = agx::backends::claude_code::ClaudeCodeBackend;
+        let mut cmd =
+            <agx::backends::claude_code::ClaudeCodeBackend as agx::backends::Backend>::run_command(
+                &backend, &config,
+            )
+            .unwrap();
+
+        let vars = agx::env_file::parse(&env_path).unwrap();
+        cmd.envs(&vars);
+
+        let envs: std::collections::BTreeMap<String, String> = cmd
+            .get_envs()
+            .filter_map(|(k, v)| {
+                Some((k.to_string_lossy().to_string(), v?.to_string_lossy().to_string()))
+            })
+            .collect();
+        assert_eq!(envs.get("MY_VAR").map(|s| s.as_str()), Some("hello"));
+        assert_eq!(envs.get("OTHER").map(|s| s.as_str()), Some("world"));
+    }
+
+    #[test]
+    fn env_file_cli_flag_precedence() {
+        // CLI flag should be chosen over manifest field.
+        let cli_flag = Some(std::path::Path::new(".env.prod"));
+        let manifest_field = Some(".env");
+        let result = cli_flag.or(manifest_field.map(std::path::Path::new));
+        assert_eq!(result.unwrap().to_str(), Some(".env.prod"));
+    }
+
+    #[test]
+    fn env_file_manifest_used_when_no_cli_flag() {
+        let cli_flag: Option<&std::path::Path> = None;
+        let manifest_field = Some(".env");
+        let result = cli_flag.or(manifest_field.map(std::path::Path::new));
+        assert_eq!(result.unwrap().to_str(), Some(".env"));
     }
 }

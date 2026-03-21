@@ -4,7 +4,7 @@
 //! It supports `agx run` by launching the `codex` CLI.
 
 use super::{copy_skills, generate_agents_md, Backend, ResolvedEnvironment};
-use crate::manifest::types::{BackendConfig, ModelSpec};
+use crate::manifest::types::{BackendConfig, IsolationMode, ModelSpec};
 use anyhow::{Context, Result};
 use std::path::Path;
 use std::process::Command;
@@ -42,8 +42,22 @@ impl Backend for CodexBackend {
     fn run_command(&self, config: &BackendConfig) -> Result<Command> {
         let mut cmd = Command::new("codex");
 
-        // Point to the skills directory.
-        cmd.args(["--skills-dir", ".codex/skills/"]);
+        let isolation = config.isolation.clone().unwrap_or_default();
+        match isolation {
+            IsolationMode::Bare => {
+                // Maximum isolation: read-only sandbox, never ask for approval.
+                cmd.args(["--sandbox", "read-only"]);
+                cmd.args(["--ask-for-approval", "never"]);
+            }
+            IsolationMode::Strict => {
+                // Restrict writes to workspace only.
+                cmd.args(["--sandbox", "read-only"]);
+            }
+            IsolationMode::Permissive => {
+                // Allow writes within the workspace.
+                cmd.args(["--sandbox", "workspace-write"]);
+            }
+        }
 
         // Set model if specified.
         if let Some(ref model) = config.model {
@@ -204,7 +218,7 @@ skills:
     fn test_codex_run_command_with_model() {
         let config = BackendConfig {
             default: None,
-            isolation: None,
+            isolation: Some(IsolationMode::Permissive),
             model: Some(ModelSpec::Simple("o3".to_string())),
         };
         let backend = CodexBackend;
@@ -212,26 +226,53 @@ skills:
 
         assert_eq!(cmd.get_program(), "codex");
         let args: Vec<_> = cmd.get_args().collect();
-        assert!(args.contains(&&std::ffi::OsStr::new("--skills-dir")));
-        assert!(args.contains(&&std::ffi::OsStr::new(".codex/skills/")));
         assert!(args.contains(&&std::ffi::OsStr::new("--model")));
         assert!(args.contains(&&std::ffi::OsStr::new("o3")));
     }
 
     #[test]
-    fn test_codex_run_command_no_model() {
+    fn test_codex_run_command_strict() {
         let config = BackendConfig {
             default: None,
-            isolation: None,
+            isolation: Some(IsolationMode::Strict),
             model: None,
         };
         let backend = CodexBackend;
         let cmd = backend.run_command(&config).unwrap();
-
-        assert_eq!(cmd.get_program(), "codex");
         let args: Vec<_> = cmd.get_args().collect();
-        assert!(args.contains(&&std::ffi::OsStr::new("--skills-dir")));
-        assert!(!args.contains(&&std::ffi::OsStr::new("--model")));
+        assert!(args.contains(&&std::ffi::OsStr::new("--sandbox")));
+        assert!(args.contains(&&std::ffi::OsStr::new("read-only")));
+        assert!(!args.contains(&&std::ffi::OsStr::new("--ask-for-approval")));
+    }
+
+    #[test]
+    fn test_codex_run_command_bare() {
+        let config = BackendConfig {
+            default: None,
+            isolation: Some(IsolationMode::Bare),
+            model: None,
+        };
+        let backend = CodexBackend;
+        let cmd = backend.run_command(&config).unwrap();
+        let args: Vec<_> = cmd.get_args().collect();
+        assert!(args.contains(&&std::ffi::OsStr::new("--sandbox")));
+        assert!(args.contains(&&std::ffi::OsStr::new("read-only")));
+        assert!(args.contains(&&std::ffi::OsStr::new("--ask-for-approval")));
+        assert!(args.contains(&&std::ffi::OsStr::new("never")));
+    }
+
+    #[test]
+    fn test_codex_run_command_permissive() {
+        let config = BackendConfig {
+            default: None,
+            isolation: Some(IsolationMode::Permissive),
+            model: None,
+        };
+        let backend = CodexBackend;
+        let cmd = backend.run_command(&config).unwrap();
+        let args: Vec<_> = cmd.get_args().collect();
+        assert!(args.contains(&&std::ffi::OsStr::new("--sandbox")));
+        assert!(args.contains(&&std::ffi::OsStr::new("workspace-write")));
     }
 
     #[test]

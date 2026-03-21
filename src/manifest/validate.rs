@@ -82,6 +82,14 @@ pub enum ValidationError {
     /// A registry pin is not a valid hex SHA (must be 40 or 64 hex chars).
     #[error("registry '{0}' has invalid pin '{1}': must be 40 or 64 hex characters")]
     InvalidRegistryPin(String, String),
+
+    /// The `env-file` field is empty.
+    #[error("env-file must not be empty")]
+    EmptyEnvFile,
+
+    /// The `env-file` path is absolute (must be relative to project root).
+    #[error("env-file path must be relative, got '{0}'")]
+    AbsoluteEnvFile(String),
 }
 
 /// Validate a parsed manifest for structural correctness.
@@ -100,6 +108,7 @@ pub fn validate(manifest: &AgentEnvironment) -> Result<(), Vec<ValidationError>>
     validate_mcp_servers(manifest, &mut errors);
     validate_context(manifest, &mut errors);
     validate_settings(manifest, &mut errors);
+    validate_env_file(manifest, &mut errors);
 
     if errors.is_empty() {
         Ok(())
@@ -295,6 +304,16 @@ fn validate_settings(manifest: &AgentEnvironment, errors: &mut Vec<ValidationErr
             errors.push(ValidationError::UndeclaredSettingsBackend(
                 backend_name.clone(),
             ));
+        }
+    }
+}
+
+fn validate_env_file(manifest: &AgentEnvironment, errors: &mut Vec<ValidationError>) {
+    if let Some(ref env_file) = manifest.env_file {
+        if env_file.trim().is_empty() {
+            errors.push(ValidationError::EmptyEnvFile);
+        } else if std::path::Path::new(env_file).is_absolute() {
+            errors.push(ValidationError::AbsoluteEnvFile(env_file.clone()));
         }
     }
 }
@@ -531,5 +550,35 @@ mod tests {
         );
         let errs = check_version_constraints(&m).unwrap_err();
         assert_eq!(errs.len(), 1);
+    }
+
+    #[test]
+    fn accepts_relative_env_file() {
+        let m = parse("name: test\nbackends:\n  claude-code: {}\nenv-file: .env\n");
+        assert!(validate(&m).is_ok());
+    }
+
+    #[test]
+    fn rejects_empty_env_file() {
+        let m = parse("name: test\nbackends:\n  claude-code: {}\nenv-file: ''\n");
+        let errs = validate(&m).unwrap_err();
+        assert!(errs
+            .iter()
+            .any(|e| matches!(e, ValidationError::EmptyEnvFile)));
+    }
+
+    #[test]
+    fn rejects_absolute_env_file() {
+        let m = parse("name: test\nbackends:\n  claude-code: {}\nenv-file: /etc/secrets\n");
+        let errs = validate(&m).unwrap_err();
+        assert!(errs
+            .iter()
+            .any(|e| matches!(e, ValidationError::AbsoluteEnvFile(_))));
+    }
+
+    #[test]
+    fn accepts_no_env_file() {
+        let m = parse("name: test\nbackends:\n  claude-code: {}\n");
+        assert!(validate(&m).is_ok());
     }
 }

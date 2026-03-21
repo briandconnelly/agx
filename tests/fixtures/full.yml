@@ -101,8 +101,6 @@ settings:
         - "Bash(npm run lint)"
       deny:
         - "Bash(rm -rf)"
-    environment:
-      CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"
   gemini-cli:
     safety_settings:
       harassment: block_none

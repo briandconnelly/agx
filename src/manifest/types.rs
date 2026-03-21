@@ -82,16 +82,31 @@ pub struct BackendConfig {
 }
 
 /// Isolation mode for a backend.
+///
+/// - `permissive`: project assets layer on top of user config.
+/// - `strict` (default): only project-scoped assets; user/global config suppressed.
+/// - `bare`: maximum isolation — skips hooks, plugins, auto-memory, etc. Ideal for CI.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum IsolationMode {
-    Strict,
     Permissive,
+    Strict,
+    Bare,
 }
 
 impl Default for IsolationMode {
     fn default() -> Self {
         Self::Strict
+    }
+}
+
+impl std::fmt::Display for IsolationMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Permissive => write!(f, "permissive"),
+            Self::Strict => write!(f, "strict"),
+            Self::Bare => write!(f, "bare"),
+        }
     }
 }
 
@@ -565,5 +580,28 @@ hooks:
         assert!(hooks.post_install.is_empty());
         assert!(hooks.pre_generate.is_empty());
         assert!(hooks.post_generate.is_empty());
+    }
+
+    #[test]
+    fn parse_env_file_field() {
+        let yaml = r#"
+name: test
+backends:
+  claude-code: {}
+env-file: .env.production
+"#;
+        let env: AgentEnvironment = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(env.env_file.as_deref(), Some(".env.production"));
+    }
+
+    #[test]
+    fn env_file_defaults_to_none() {
+        let yaml = r#"
+name: test
+backends:
+  claude-code: {}
+"#;
+        let env: AgentEnvironment = serde_yaml::from_str(yaml).unwrap();
+        assert!(env.env_file.is_none());
     }
 }

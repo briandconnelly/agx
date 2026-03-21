@@ -56,10 +56,21 @@ impl Backend for ClaudeCodeBackend {
     fn run_command(&self, config: &BackendConfig) -> Result<Command> {
         let mut cmd = Command::new("claude");
 
-        // Apply isolation flags for strict mode.
         let isolation = config.isolation.clone().unwrap_or_default();
-        if isolation == IsolationMode::Strict {
-            cmd.arg("--no-user-config");
+        match isolation {
+            IsolationMode::Bare => {
+                // Maximum isolation: skip hooks, plugins, auto-memory, etc.
+                cmd.arg("--bare");
+                cmd.arg("--strict-mcp-config");
+            }
+            IsolationMode::Strict => {
+                // Only load project-scoped settings; ignore user/global config.
+                cmd.args(["--setting-sources", "project"]);
+                cmd.arg("--strict-mcp-config");
+            }
+            IsolationMode::Permissive => {
+                // No isolation flags — project assets layer on user config.
+            }
         }
 
         // Set model if specified.
@@ -100,10 +111,6 @@ fn generate_settings(
         );
     }
 
-    let isolation = backend_config
-        .and_then(|c| c.isolation.clone())
-        .unwrap_or_default();
-
     // Merge user-supplied settings from manifest.
     if let Some(yaml_val) = settings {
         let json_str =
@@ -113,18 +120,6 @@ fn generate_settings(
             for (k, v) in user_obj {
                 obj.insert(k, v);
             }
-        }
-    }
-
-    // In strict mode, add environment flags to disable user-level config.
-    if isolation == IsolationMode::Strict {
-        let env_obj = obj
-            .entry("env".to_string())
-            .or_insert_with(|| json!({}));
-        if let Value::Object(env_map) = env_obj {
-            env_map
-                .entry("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS")
-                .or_insert_with(|| json!("1"));
         }
     }
 
@@ -243,14 +238,10 @@ backends:
 
         assert_eq!(parsed["_generated_by"], GENERATED_MARKER);
         assert_eq!(parsed["env"]["AGX_PROJECT"], "test-project");
-        assert_eq!(
-            parsed["env"]["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"],
-            "1"
-        );
     }
 
     #[test]
-    fn test_settings_permissive_no_env_flags() {
+    fn test_settings_permissive() {
         let dir = tempdir().unwrap();
         let config = BackendConfig {
             default: None,
@@ -262,9 +253,7 @@ backends:
         let content = fs::read_to_string(dir.path().join(".claude/settings.json")).unwrap();
         let parsed: Value = serde_json::from_str(&content).unwrap();
 
-        // Permissive mode should have AGX_PROJECT but NOT the strict isolation flags.
         assert_eq!(parsed["env"]["AGX_PROJECT"], "test-project");
-        assert!(parsed["env"].get("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS").is_none());
     }
 
     #[test]
@@ -686,9 +675,27 @@ mcp-servers:
         let backend = ClaudeCodeBackend;
         let cmd = backend.run_command(&config).unwrap();
         let args: Vec<_> = cmd.get_args().collect();
-        assert!(args.contains(&&std::ffi::OsStr::new("--no-user-config")));
+        assert!(args.contains(&&std::ffi::OsStr::new("--setting-sources")));
+        assert!(args.contains(&&std::ffi::OsStr::new("project")));
+        assert!(args.contains(&&std::ffi::OsStr::new("--strict-mcp-config")));
         assert!(args.contains(&&std::ffi::OsStr::new("--model")));
         assert!(args.contains(&&std::ffi::OsStr::new("sonnet")));
+    }
+
+    #[test]
+    fn test_run_command_bare() {
+        let config = BackendConfig {
+            default: None,
+            isolation: Some(IsolationMode::Bare),
+            model: None,
+        };
+        let backend = ClaudeCodeBackend;
+        let cmd = backend.run_command(&config).unwrap();
+        let args: Vec<_> = cmd.get_args().collect();
+        assert!(args.contains(&&std::ffi::OsStr::new("--bare")));
+        assert!(args.contains(&&std::ffi::OsStr::new("--strict-mcp-config")));
+        // --bare implies no --setting-sources needed.
+        assert!(!args.contains(&&std::ffi::OsStr::new("--setting-sources")));
     }
 
     #[test]
@@ -701,7 +708,9 @@ mcp-servers:
         let backend = ClaudeCodeBackend;
         let cmd = backend.run_command(&config).unwrap();
         let args: Vec<_> = cmd.get_args().collect();
-        assert!(!args.contains(&&std::ffi::OsStr::new("--no-user-config")));
+        assert!(!args.contains(&&std::ffi::OsStr::new("--setting-sources")));
+        assert!(!args.contains(&&std::ffi::OsStr::new("--bare")));
+        assert!(!args.contains(&&std::ffi::OsStr::new("--strict-mcp-config")));
     }
 
     #[test]

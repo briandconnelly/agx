@@ -3,7 +3,7 @@
 use super::{
     copy_agents, copy_skills, yaml_to_json, Backend, ResolvedEnvironment, GENERATED_MARKER,
 };
-use crate::manifest::types::{AgentDependency, BackendConfig, ModelConfig, ModelSpec};
+use crate::manifest::types::{AgentDependency, BackendConfig, IsolationMode, ModelConfig, ModelSpec};
 use anyhow::{Context, Result};
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
@@ -60,6 +60,17 @@ impl Backend for GeminiCliBackend {
 
     fn run_command(&self, config: &BackendConfig) -> Result<Command> {
         let mut cmd = Command::new("gemini");
+
+        let isolation = config.isolation.clone().unwrap_or_default();
+        match isolation {
+            IsolationMode::Bare | IsolationMode::Strict => {
+                // Sandbox mode restricts filesystem access to the workspace.
+                cmd.arg("--sandbox");
+            }
+            IsolationMode::Permissive => {
+                // No isolation flags.
+            }
+        }
 
         // Set model if specified.
         if let Some(ref model) = config.model {
@@ -775,16 +786,55 @@ settings:
     }
 
     #[test]
-    fn test_run_command_no_model() {
+    fn test_run_command_no_model_permissive() {
         let config = BackendConfig {
             default: None,
-            isolation: None,
+            isolation: Some(IsolationMode::Permissive),
             model: None,
         };
         let backend = GeminiCliBackend;
         let cmd = backend.run_command(&config).unwrap();
         let args: Vec<_> = cmd.get_args().collect();
         assert!(args.is_empty());
+    }
+
+    #[test]
+    fn test_run_command_strict() {
+        let config = BackendConfig {
+            default: None,
+            isolation: Some(IsolationMode::Strict),
+            model: None,
+        };
+        let backend = GeminiCliBackend;
+        let cmd = backend.run_command(&config).unwrap();
+        let args: Vec<_> = cmd.get_args().collect();
+        assert!(args.contains(&&std::ffi::OsStr::new("--sandbox")));
+    }
+
+    #[test]
+    fn test_run_command_bare() {
+        let config = BackendConfig {
+            default: None,
+            isolation: Some(IsolationMode::Bare),
+            model: None,
+        };
+        let backend = GeminiCliBackend;
+        let cmd = backend.run_command(&config).unwrap();
+        let args: Vec<_> = cmd.get_args().collect();
+        assert!(args.contains(&&std::ffi::OsStr::new("--sandbox")));
+    }
+
+    #[test]
+    fn test_run_command_permissive_no_sandbox() {
+        let config = BackendConfig {
+            default: None,
+            isolation: Some(IsolationMode::Permissive),
+            model: None,
+        };
+        let backend = GeminiCliBackend;
+        let cmd = backend.run_command(&config).unwrap();
+        let args: Vec<_> = cmd.get_args().collect();
+        assert!(!args.contains(&&std::ffi::OsStr::new("--sandbox")));
     }
 
     #[test]
