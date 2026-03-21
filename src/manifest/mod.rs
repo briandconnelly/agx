@@ -104,6 +104,7 @@ mod tests {
             paths: None,
             context: None,
             hooks: None,
+            env_file: None,
         };
 
         save(&manifest, &path).unwrap();
@@ -168,6 +169,7 @@ mod tests {
             paths: None,
             context: None,
             hooks: None,
+            env_file: None,
         };
 
         save(&manifest, &path).unwrap();

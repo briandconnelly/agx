@@ -7,6 +7,7 @@ pub mod backends;
 pub mod cache;
 pub mod config;
 pub mod context;
+pub mod env_file;
 pub mod hooks;
 pub mod lockfile;
 pub mod manifest;

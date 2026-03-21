@@ -669,6 +669,7 @@ mod tests {
             paths: None,
             context: None,
             hooks: None,
+            env_file: None,
         }
     }
 
@@ -1069,6 +1070,7 @@ mod tests {
             paths: None,
             context: None,
             hooks: None,
+            env_file: None,
         };
         env.skills.insert(
             "only-skill".to_string(),
@@ -1104,6 +1106,7 @@ mod tests {
             paths: None,
             context: None,
             hooks: None,
+            env_file: None,
         };
         env.agents.insert(
             "solo-agent".to_string(),
@@ -1140,6 +1143,7 @@ mod tests {
             paths: None,
             context: None,
             hooks: None,
+            env_file: None,
         };
         let output = build_tree_string(&env);
         assert!(output.starts_with("no-version\n"));
@@ -1163,6 +1167,7 @@ mod tests {
             paths: None,
             context: None,
             hooks: None,
+            env_file: None,
         };
         let output = build_tree_string(&env);
         // Just the project name, no sections
@@ -1189,6 +1194,7 @@ mod tests {
             paths: None,
             context: None,
             hooks: None,
+            env_file: None,
         };
         env.plugins.insert(
             "my.plugin@v2".to_string(),
@@ -1226,6 +1232,7 @@ mod tests {
             paths: None,
             context: None,
             hooks: None,
+            env_file: None,
         };
         env.mcp_servers.insert(
             "srv".to_string(),
@@ -1261,6 +1268,7 @@ mod tests {
             paths: None,
             context: None,
             hooks: None,
+            env_file: None,
         };
         env.plugins.insert(
             "git-plugin".to_string(),
@@ -1295,6 +1303,7 @@ mod tests {
             paths: None,
             context: None,
             hooks: None,
+            env_file: None,
         };
         env.plugins.insert(
             "bare-plugin".to_string(),
@@ -1329,6 +1338,7 @@ mod tests {
             paths: None,
             context: None,
             hooks: None,
+            env_file: None,
         };
         env.agents.insert(
             "local-agent".to_string(),
@@ -1375,6 +1385,7 @@ mod tests {
             paths: None,
             context: None,
             hooks: None,
+            env_file: None,
         };
         env.skills.insert(
             "local-skill".to_string(),
@@ -1738,6 +1749,7 @@ mod tests {
             paths: None,
             context: None,
             hooks: None,
+            env_file: None,
         };
         env.skills.insert(
             "s1".to_string(),
@@ -1779,6 +1791,7 @@ mod tests {
             paths: None,
             context: None,
             hooks: None,
+            env_file: None,
         };
         env.skills.insert(
             "alpha".to_string(),
@@ -1836,6 +1849,7 @@ mod tests {
             paths: None,
             context: None,
             hooks: None,
+            env_file: None,
         };
         env.plugins.insert(
             "big-plugin".to_string(),
@@ -1886,6 +1900,7 @@ mod tests {
             paths: None,
             context: None,
             hooks: None,
+            env_file: None,
         };
         let output = build_dot_string(&env);
         assert!(output.contains("digraph \"empty-dot\""));
@@ -1913,6 +1928,7 @@ mod tests {
             paths: None,
             context: None,
             hooks: None,
+            env_file: None,
         };
         env.backends.insert(
             "strict-be".to_string(),
@@ -1962,6 +1978,7 @@ mod tests {
             paths: None,
             context: None,
             hooks: None,
+            env_file: None,
         };
         env.plugins.insert(
             "versioned".to_string(),
@@ -2202,6 +2219,7 @@ mcp-servers:
             paths: None,
             context: None,
             hooks: None,
+            env_file: None,
         };
         env.mcp_servers.insert(
             "url-srv".to_string(),

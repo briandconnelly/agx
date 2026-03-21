@@ -196,6 +196,7 @@ fn run_non_interactive_flow(cwd: &Path, args: &InitArgs) -> Result<()> {
         paths: None,
         context,
         hooks: None,
+        env_file: None,
     };
 
     let mut created_files = Vec::new();
@@ -354,6 +355,7 @@ fn run_new_project_flow(cwd: &Path) -> Result<()> {
         paths: None,
         context,
         hooks: None,
+        env_file: None,
     };
 
     // Write files.
@@ -515,6 +517,7 @@ fn run_import_flow(cwd: &Path, scan: &ScanResult) -> Result<()> {
         paths: None,
         context,
         hooks: None,
+        env_file: None,
     };
 
     // Write files.
@@ -1271,6 +1274,7 @@ mod tests {
             paths: None,
             context: None,
             hooks: None,
+        env_file: None,
         };
 
         write_manifest(dir.path(), &manifest).unwrap();
@@ -1333,6 +1337,7 @@ mod tests {
                 children: vec![],
             }),
             hooks: None,
+        env_file: None,
         };
 
         write_manifest(dir.path(), &manifest).unwrap();
@@ -1784,6 +1789,7 @@ Generic sub content.
                 children: vec![],
             }),
             hooks: None,
+        env_file: None,
         };
 
         write_manifest(dir.path(), &manifest).unwrap();
@@ -2365,6 +2371,7 @@ Generic sub content.
             paths: None,
             context: None,
             hooks: None,
+        env_file: None,
         };
 
         write_manifest(dir.path(), &manifest).unwrap();
@@ -2407,6 +2414,7 @@ Generic sub content.
             paths: None,
             context: None,
             hooks: None,
+        env_file: None,
         };
 
         write_manifest(dir.path(), &manifest).unwrap();

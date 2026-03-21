@@ -101,6 +101,7 @@ mod tests {
             paths: None,
             context: None,
             hooks: None,
+            env_file: None,
         }
     }
 

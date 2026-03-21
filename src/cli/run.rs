@@ -22,6 +22,10 @@ pub struct RunArgs {
     #[arg(long)]
     pub effort: Option<String>,
 
+    /// Path to a .env file to load into the backend process
+    #[arg(long)]
+    pub env_file: Option<String>,
+
     /// Arguments to pass through to the backend
     #[arg(last = true)]
     pub backend_args: Vec<String>,
@@ -82,12 +86,24 @@ pub fn run(args: RunArgs) -> anyhow::Result<()> {
         cmd.args(["--effort", effort]);
     }
 
-    // 7. Forward backend args.
+    // 7. Load env file (CLI flag takes precedence over manifest field).
+    let env_file_path = args
+        .env_file
+        .as_deref()
+        .or(manifest.env_file.as_deref());
+    if let Some(env_path) = env_file_path {
+        let path = project_root.join(env_path);
+        let vars = agx::env_file::parse(&path)
+            .with_context(|| format!("loading env file '{}'", env_path))?;
+        cmd.envs(vars);
+    }
+
+    // 8. Forward backend args.
     for arg in &args.backend_args {
         cmd.arg(arg);
     }
 
-    // 8. Launch — exec the command, forward exit code.
+    // 9. Launch — exec the command, forward exit code.
     let status = cmd.status().with_context(|| {
         format!(
             "failed to launch backend '{}' (is '{}' installed?)",
@@ -201,6 +217,7 @@ mod tests {
             paths: None,
             context: None,
             hooks: None,
+            env_file: None,
         }
     }
 

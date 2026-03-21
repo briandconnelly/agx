@@ -71,6 +71,10 @@
     },
     "context": {
       "$ref": "#/$defs/ContextConfig"
+    },
+    "env-file": {
+      "type": "string",
+      "description": "Path to a .env file to load when running backends."
     }
   },
   "$defs": {

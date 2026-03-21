@@ -59,6 +59,10 @@ pub struct AgentEnvironment {
     /// Lifecycle hooks (pre/post install/generate).
     #[serde(default)]
     pub hooks: Option<HooksConfig>,
+
+    /// Path to a `.env` file to load when running backends.
+    #[serde(default, rename = "env-file")]
+    pub env_file: Option<String>,
 }
 
 /// Configuration for a single backend.
