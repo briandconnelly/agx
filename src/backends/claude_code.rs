@@ -91,7 +91,7 @@ fn generate_settings(
 
     // Set AGX_PROJECT so skills/hooks can detect the agx-managed project.
     let env_obj = obj
-        .entry("environment".to_string())
+        .entry("env".to_string())
         .or_insert_with(|| json!({}));
     if let Value::Object(env_map) = env_obj {
         env_map.insert(
@@ -119,7 +119,7 @@ fn generate_settings(
     // In strict mode, add environment flags to disable user-level config.
     if isolation == IsolationMode::Strict {
         let env_obj = obj
-            .entry("environment".to_string())
+            .entry("env".to_string())
             .or_insert_with(|| json!({}));
         if let Value::Object(env_map) = env_obj {
             env_map
@@ -242,9 +242,9 @@ backends:
         let parsed: Value = serde_json::from_str(&content).unwrap();
 
         assert_eq!(parsed["_generated_by"], GENERATED_MARKER);
-        assert_eq!(parsed["environment"]["AGX_PROJECT"], "test-project");
+        assert_eq!(parsed["env"]["AGX_PROJECT"], "test-project");
         assert_eq!(
-            parsed["environment"]["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"],
+            parsed["env"]["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"],
             "1"
         );
     }
@@ -263,8 +263,8 @@ backends:
         let parsed: Value = serde_json::from_str(&content).unwrap();
 
         // Permissive mode should have AGX_PROJECT but NOT the strict isolation flags.
-        assert_eq!(parsed["environment"]["AGX_PROJECT"], "test-project");
-        assert!(parsed["environment"].get("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS").is_none());
+        assert_eq!(parsed["env"]["AGX_PROJECT"], "test-project");
+        assert!(parsed["env"].get("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS").is_none());
     }
 
     #[test]

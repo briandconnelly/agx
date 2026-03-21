@@ -188,11 +188,11 @@ fn generate_settings(
             match model {
                 ModelSpec::Simple(s) => {
                     obj.entry("model".to_string())
-                        .or_insert_with(|| json!(s));
+                        .or_insert_with(|| json!({"name": s}));
                 }
                 ModelSpec::Full(cfg) => {
                     obj.entry("model".to_string())
-                        .or_insert_with(|| json!(cfg.id));
+                        .or_insert_with(|| json!({"name": cfg.id}));
                     model_config_ref = Some(cfg);
                 }
             }
@@ -258,7 +258,7 @@ mod tests {
         let content = fs::read_to_string(dir.path().join(".gemini/settings.json")).unwrap();
         let parsed: Value = serde_json::from_str(&content).unwrap();
 
-        assert_eq!(parsed["model"], "gemini-2.5-pro");
+        assert_eq!(parsed["model"]["name"], "gemini-2.5-pro");
     }
 
     #[test]
@@ -300,7 +300,7 @@ mod tests {
         let content = fs::read_to_string(dir.path().join(".gemini/settings.json")).unwrap();
         let parsed: Value = serde_json::from_str(&content).unwrap();
 
-        assert_eq!(parsed["model"], "gemini-2.5-pro");
+        assert_eq!(parsed["model"]["name"], "gemini-2.5-pro");
 
         let model_configs = &parsed["modelConfigs"]["gemini-2.5-pro"];
         assert_eq!(model_configs["temperature"], 0.7);
@@ -734,7 +734,7 @@ settings:
             fs::read_to_string(dir.path().join(".gemini/settings.json")).unwrap();
         let settings: Value = serde_json::from_str(&settings_content).unwrap();
         assert_eq!(settings["_generated_by"], GENERATED_MARKER);
-        assert_eq!(settings["model"], "gemini-2.5-pro");
+        assert_eq!(settings["model"]["name"], "gemini-2.5-pro");
         assert_eq!(settings["sandbox"], true);
         assert_eq!(settings["modelConfigs"]["gemini-2.5-pro"]["temperature"], 0.7);
         assert_eq!(settings["modelConfigs"]["gemini-2.5-pro"]["topP"], 0.95);
@@ -826,7 +826,7 @@ settings:
         let content = fs::read_to_string(dir.path().join(".gemini/settings.json")).unwrap();
         let parsed: Value = serde_json::from_str(&content).unwrap();
 
-        assert_eq!(parsed["model"], "gemini-2.5-pro");
+        assert_eq!(parsed["model"]["name"], "gemini-2.5-pro");
         // No modelConfigs when there are no parameters.
         assert!(parsed.get("modelConfigs").is_none());
     }
