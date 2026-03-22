@@ -2,13 +2,51 @@
 
 A package manager for AI agent environments. Think Cargo or uv, but for managing plugins, skills, subagents, and MCP servers across agent frameworks.
 
-## What is agx?
+## Why agx?
 
-Managing configurations for AI coding agents is tedious and non-reproducible. Each framework -- Claude Code, Gemini CLI, Codex, Cursor -- has its own config format, directory layout, and conventions. When a team works on a project, there is no reliable way to ensure every developer's agent environment matches: skills drift, MCP servers get misconfigured, and context files go stale. It is the "it works on my machine" problem, but for AI tooling.
+AI coding agents are becoming core infrastructure for development teams. But managing their environments -- plugins, skills, MCP servers, context files, model settings -- is a mess:
 
-agx solves this with a single `agent-environment.yml` manifest that declares everything your agents need: plugins, skills, subagents, MCP servers, context files, and model settings. A lockfile pins exact versions for reproducibility. A global cache avoids redundant downloads. And a generate step renders the right files for whichever backend you use -- all from one source of truth.
+- **Environment drift.** One developer has a working MCP server config; another has a stale one. Skills get added on one machine and forgotten on another. There is no lockfile, no pinning, no reproducibility.
+- **Multi-framework duplication.** A project using Claude Code and Gemini CLI maintains two parallel sets of config files that are 80% identical. Changes to shared instructions require editing multiple files.
+- **No sharing mechanism.** Useful agent skills and plugins are copy-pasted between projects. There is no registry, no versioning, no way to discover what others have built.
+- **Manual plumbing.** Each framework has its own directory layout, settings format, and conventions. Setting up a new developer means a wiki page and 20 minutes of hand-editing JSON.
 
-The workflow mirrors established package managers. You write a manifest, run `agx install`, and get a fully configured agent environment. Check the manifest and lockfile into version control; everything else is regenerated on demand.
+agx eliminates all of this. One manifest, one lockfile, one command.
+
+## Key Features
+
+### One manifest, many backends
+
+Write `agent-environment.yml` once. agx generates the correct config files for Claude Code, Gemini CLI, Codex, Cursor, and Windsurf -- simultaneously, from one source of truth.
+
+### Reproducible environments
+
+A lockfile (`agent-environment.lock`) pins exact versions, commit SHAs, and content hashes. Every developer on the team gets an identical agent environment. No more "works on my machine" for AI tooling.
+
+### Import existing projects
+
+Already have a `.claude/` directory, `.mcp.json`, agents, and skills? Run `agx import` to reverse-engineer a manifest from your existing config -- instant value, no manual YAML writing.
+
+```bash
+agx import              # scan and create manifest from existing files
+agx import --dry-run    # preview what would be imported
+agx import --backend claude-code,gemini-cli  # import specific backends only
+```
+
+### Federated plugin registries
+
+Share skills and agents through GitHub-hosted marketplace registries. Use the official registry, community marketplaces, or host private registries for your organization -- no infrastructure required.
+
+### Context file management
+
+Shared project instructions go in `CONTEXT.md`. Backend-specific additions go in overlays (`CONTEXT.claude-code.md`, `CONTEXT.gemini-cli.md`). agx merges them during generation, eliminating the duplication that plagues multi-framework projects.
+
+### Isolation modes
+
+Control how much of the host environment leaks into your agent:
+- **strict** -- only project-scoped assets; user and global config suppressed (default)
+- **permissive** -- project assets layer on top of user config
+- **bare** -- maximum isolation for CI/CD pipelines
 
 ## Quick Start
 
@@ -16,8 +54,11 @@ The workflow mirrors established package managers. You write a manifest, run `ag
 # Install agx
 cargo install agx
 
-# Initialize a new project
+# New project: interactive wizard
 agx init
+
+# Existing project: import current config
+agx import
 
 # Add a plugin from a registry
 agx add plugin quality-review --registry official --version ">=1.0.0"
@@ -28,6 +69,32 @@ agx install
 # Launch your agent in the managed environment
 agx run
 ```
+
+## Use Cases
+
+### Teams standardizing on agent tooling
+
+Your team uses Claude Code. Everyone has slightly different settings, skills, and MCP servers. Some developers have plugins others don't. When someone joins, they spend an hour copying config files.
+
+With agx: check in `agent-environment.yml` and `agent-environment.lock`. New developers run `agx install` and get an identical environment in seconds.
+
+### Multi-framework projects
+
+Your project supports both Claude Code and Gemini CLI. You maintain parallel config directories, duplicating shared instructions and skills across frameworks. Every change requires editing two (or more) sets of files.
+
+With agx: write shared context once in `CONTEXT.md`, add backend-specific overlays where needed. Skills and agents are declared once in the manifest and generated for all active backends.
+
+### Organizations sharing internal tools
+
+Your company has built custom agent skills for code review, deployment, and compliance checks. Today these are copy-pasted between repositories, with no versioning or update mechanism.
+
+With agx: publish skills to a private GitHub-hosted registry. Projects declare dependencies with semver constraints. Updates propagate through `agx update`.
+
+### CI/CD pipelines
+
+Your CI needs to run agents in a clean, reproducible environment without developer-specific config leaking in.
+
+With agx: use `bare` isolation mode. The lockfile guarantees the exact same agent environment in CI as in development. No manual setup, no environment-specific scripts.
 
 ## Manifest Example
 
@@ -98,7 +165,8 @@ hooks:
 
 | Command | Description |
 |---|---|
-| `agx init` | Initialize a new agx project or import existing configuration |
+| `agx init` | Initialize a new agx project (interactive wizard) |
+| `agx import` | Import existing agent config into an `agent-environment.yml` |
 | `agx install` | Resolve, download, and generate backend configurations |
 | `agx add` | Add a dependency to the manifest |
 | `agx remove` | Remove a dependency from the manifest |
@@ -116,12 +184,13 @@ hooks:
 | `agx clean` | Remove `.agx/` and all generated backend directories |
 | `agx cache` | Cache management commands |
 | `agx registry` | Registry management commands |
+| `agx publish` | Publish an asset to a marketplace registry |
 | `agx backends` | List available backends |
 | `agx completions` | Generate shell completions |
 
 ## Backends
 
-agx supports multiple agent frameworks through a pluggable backend system. Each backend knows how to generate the correct directory layout and config files for its framework.
+agx supports multiple agent frameworks through a pluggable backend system. Each backend generates the correct directory layout and config files for its framework.
 
 | Backend | Context File | Generated Output |
 |---|---|---|
@@ -129,6 +198,7 @@ agx supports multiple agent frameworks through a pluggable backend system. Each 
 | `gemini-cli` | `GEMINI.md` | `.gemini/settings.json`, `.gemini/skills/` |
 | `codex` | `AGENTS.md` | `.codex/agents/`, `.codex/skills/` |
 | `cursor` | `AGENTS.md` | `.cursor/agents/`, `.cursor/skills/` |
+| `windsurf` | `AGENTS.md` | `.agx/agents/`, `.agx/skills/` |
 | `generic` | `AGENTS.md` | `.agx/agents/`, `.agx/skills/` |
 
 A single manifest can target multiple backends simultaneously. Run `agx backends` to list all available backends.

@@ -586,7 +586,7 @@ fn run_import_flow(cwd: &Path, scan: &ScanResult) -> Result<()> {
 // ===========================================================================
 
 /// Results from scanning a project directory for existing agent configuration.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ScanResult {
     /// Path to CLAUDE.md if it exists.
     pub claude_md: Option<PathBuf>,
@@ -605,6 +605,8 @@ pub struct ScanResult {
     pub claude_settings: bool,
     /// Parsed value from .claude/settings.json (as serde_yaml::Value for inclusion in settings).
     pub claude_settings_value: Option<serde_yaml::Value>,
+    /// Raw JSON value from .claude/settings.json (for structured extraction).
+    pub claude_settings_json: Option<serde_json::Value>,
 
     /// Whether .mcp.json exists.
     pub mcp_json: bool,
@@ -619,6 +621,31 @@ pub struct ScanResult {
 
     /// Whether .gemini/ directory exists.
     pub gemini_dir: bool,
+    /// Whether .gemini/settings.json exists.
+    pub gemini_settings: bool,
+    /// Raw JSON value from .gemini/settings.json (for structured extraction).
+    pub gemini_settings_json: Option<serde_json::Value>,
+    /// Parsed value from .gemini/settings.json (as serde_yaml::Value for inclusion in settings).
+    pub gemini_settings_value: Option<serde_yaml::Value>,
+    /// Agent names found in .gemini/agents/*.md.
+    pub gemini_agents: Vec<String>,
+    /// Skill directory names found in .gemini/skills/*/.
+    pub gemini_skills: Vec<String>,
+
+    /// Whether .cursor/ directory exists.
+    pub cursor_dir: bool,
+    /// Rule names found in .cursor/rules/*.md (skill equivalents).
+    pub cursor_rules: Vec<String>,
+
+    /// Whether .codex/ directory exists.
+    pub codex_dir: bool,
+    /// Skill directory names found in .codex/skills/*/.
+    pub codex_skills: Vec<String>,
+
+    /// Whether .windsurf/ directory exists.
+    pub windsurf_dir: bool,
+    /// Rule names found in .windsurf/rules/*.md (skill equivalents).
+    pub windsurf_rules: Vec<String>,
 }
 
 impl ScanResult {
@@ -632,6 +659,15 @@ impl ScanResult {
             || !self.claude_agents.is_empty()
             || !self.claude_skills.is_empty()
             || self.gemini_dir
+            || self.gemini_settings
+            || !self.gemini_agents.is_empty()
+            || !self.gemini_skills.is_empty()
+            || self.cursor_dir
+            || !self.cursor_rules.is_empty()
+            || self.codex_dir
+            || !self.codex_skills.is_empty()
+            || self.windsurf_dir
+            || !self.windsurf_rules.is_empty()
     }
 
     /// Return the list of detected backend names.
@@ -648,8 +684,25 @@ impl ScanResult {
             backends.push("claude-code");
         }
 
-        if self.gemini_md.is_some() || self.gemini_dir {
+        if self.gemini_md.is_some()
+            || self.gemini_dir
+            || self.gemini_settings
+            || !self.gemini_agents.is_empty()
+            || !self.gemini_skills.is_empty()
+        {
             backends.push("gemini-cli");
+        }
+
+        if self.cursor_dir || !self.cursor_rules.is_empty() {
+            backends.push("cursor");
+        }
+
+        if self.codex_dir || !self.codex_skills.is_empty() {
+            backends.push("codex");
+        }
+
+        if self.windsurf_dir || !self.windsurf_rules.is_empty() {
+            backends.push("windsurf");
         }
 
         backends
@@ -666,11 +719,23 @@ pub fn scan_project(cwd: &Path) -> ScanResult {
         agents_md: None,
         claude_settings: false,
         claude_settings_value: None,
+        claude_settings_json: None,
         mcp_json: false,
         mcp_servers: BTreeMap::new(),
         claude_agents: Vec::new(),
         claude_skills: Vec::new(),
         gemini_dir: false,
+        gemini_settings: false,
+        gemini_settings_json: None,
+        gemini_settings_value: None,
+        gemini_agents: Vec::new(),
+        gemini_skills: Vec::new(),
+        cursor_dir: false,
+        cursor_rules: Vec::new(),
+        codex_dir: false,
+        codex_skills: Vec::new(),
+        windsurf_dir: false,
+        windsurf_rules: Vec::new(),
     };
 
     // CLAUDE.md
@@ -703,6 +768,7 @@ pub fn scan_project(cwd: &Path) -> ScanResult {
         result.claude_settings = true;
         if let Ok(content) = fs::read_to_string(&claude_settings_path) {
             if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&content) {
+                result.claude_settings_json = Some(json_val.clone());
                 // Convert JSON value to serde_yaml::Value for inclusion in the settings map.
                 let yaml_str = serde_json::to_string(&json_val).unwrap_or_default();
                 if let Ok(yaml_val) = serde_yaml::from_str::<serde_yaml::Value>(&yaml_str) {
@@ -755,6 +821,115 @@ pub fn scan_project(cwd: &Path) -> ScanResult {
     let gemini_dir = cwd.join(".gemini");
     if gemini_dir.is_dir() {
         result.gemini_dir = true;
+    }
+
+    // .gemini/settings.json
+    let gemini_settings_path = cwd.join(".gemini/settings.json");
+    if gemini_settings_path.exists() {
+        result.gemini_settings = true;
+        if let Ok(content) = fs::read_to_string(&gemini_settings_path) {
+            if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&content) {
+                result.gemini_settings_json = Some(json_val.clone());
+                let yaml_str = serde_json::to_string(&json_val).unwrap_or_default();
+                if let Ok(yaml_val) = serde_yaml::from_str::<serde_yaml::Value>(&yaml_str) {
+                    result.gemini_settings_value = Some(yaml_val);
+                }
+            }
+        }
+    }
+
+    // .gemini/agents/*.md
+    let gemini_agents_dir = cwd.join(".gemini/agents");
+    if gemini_agents_dir.is_dir() {
+        if let Ok(entries) = fs::read_dir(&gemini_agents_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) == Some("md") {
+                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                        result.gemini_agents.push(stem.to_string());
+                    }
+                }
+            }
+            result.gemini_agents.sort();
+        }
+    }
+
+    // .gemini/skills/*/
+    let gemini_skills_dir = cwd.join(".gemini/skills");
+    if gemini_skills_dir.is_dir() {
+        if let Ok(entries) = fs::read_dir(&gemini_skills_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
+                        result.gemini_skills.push(name.to_string());
+                    }
+                }
+            }
+            result.gemini_skills.sort();
+        }
+    }
+
+    // .cursor/ directory and rules
+    let cursor_dir = cwd.join(".cursor");
+    if cursor_dir.is_dir() {
+        result.cursor_dir = true;
+    }
+    let cursor_rules_dir = cwd.join(".cursor/rules");
+    if cursor_rules_dir.is_dir() {
+        if let Ok(entries) = fs::read_dir(&cursor_rules_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) == Some("md")
+                    || path.extension().and_then(|e| e.to_str()) == Some("mdc")
+                {
+                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                        result.cursor_rules.push(stem.to_string());
+                    }
+                }
+            }
+            result.cursor_rules.sort();
+        }
+    }
+
+    // .codex/ directory and skills
+    let codex_dir = cwd.join(".codex");
+    if codex_dir.is_dir() {
+        result.codex_dir = true;
+    }
+    let codex_skills_dir = cwd.join(".codex/skills");
+    if codex_skills_dir.is_dir() {
+        if let Ok(entries) = fs::read_dir(&codex_skills_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
+                        result.codex_skills.push(name.to_string());
+                    }
+                }
+            }
+            result.codex_skills.sort();
+        }
+    }
+
+    // .windsurf/ directory and rules
+    let windsurf_dir = cwd.join(".windsurf");
+    if windsurf_dir.is_dir() {
+        result.windsurf_dir = true;
+    }
+    let windsurf_rules_dir = cwd.join(".windsurf/rules");
+    if windsurf_rules_dir.is_dir() {
+        if let Ok(entries) = fs::read_dir(&windsurf_rules_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) == Some("md") {
+                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                        result.windsurf_rules.push(stem.to_string());
+                    }
+                }
+            }
+            result.windsurf_rules.sort();
+        }
     }
 
     result
@@ -822,7 +997,7 @@ fn parse_mcp_json(path: &Path) -> BTreeMap<String, McpServerConfig> {
 }
 
 /// Pretty-print scan results to stdout.
-fn print_scan_results(scan: &ScanResult) {
+pub fn print_scan_results(scan: &ScanResult) {
     println!(
         "{}",
         style("Scanning project for existing agent configuration...").bold()
@@ -892,7 +1067,12 @@ fn print_scan_results(scan: &ScanResult) {
     }
 
     // Gemini
-    if scan.gemini_md.is_some() || scan.gemini_dir {
+    if scan.gemini_md.is_some()
+        || scan.gemini_dir
+        || scan.gemini_settings
+        || !scan.gemini_agents.is_empty()
+        || !scan.gemini_skills.is_empty()
+    {
         println!("    {} {}", style("●").green(), style("gemini-cli").bold());
         if scan.gemini_md.is_some() {
             println!(
@@ -901,8 +1081,81 @@ fn print_scan_results(scan: &ScanResult) {
                 scan.gemini_md_lines
             );
         }
-        if scan.gemini_dir {
+        if scan.gemini_settings {
+            println!("      {} .gemini/settings.json", style("├──").dim());
+        }
+        if !scan.gemini_agents.is_empty() {
+            let count = scan.gemini_agents.len();
+            let names = scan.gemini_agents.join(", ");
+            println!(
+                "      {} .gemini/agents/ ({count} agent{}: {names})",
+                style("├──").dim(),
+                if count == 1 { "" } else { "s" }
+            );
+        }
+        if !scan.gemini_skills.is_empty() {
+            let count = scan.gemini_skills.len();
+            let names = scan.gemini_skills.join(", ");
+            println!(
+                "      {} .gemini/skills/ ({count} skill{}: {names})",
+                style("├──").dim(),
+                if count == 1 { "" } else { "s" }
+            );
+        }
+        if scan.gemini_dir
+            && !scan.gemini_settings
+            && scan.gemini_agents.is_empty()
+            && scan.gemini_skills.is_empty()
+        {
             println!("      {} .gemini/", style("└──").dim());
+        }
+    }
+
+    // Cursor
+    if scan.cursor_dir || !scan.cursor_rules.is_empty() {
+        println!("    {} {}", style("●").green(), style("cursor").bold());
+        if !scan.cursor_rules.is_empty() {
+            let count = scan.cursor_rules.len();
+            let names = scan.cursor_rules.join(", ");
+            println!(
+                "      {} .cursor/rules/ ({count} rule{}: {names})",
+                style("└──").dim(),
+                if count == 1 { "" } else { "s" }
+            );
+        } else {
+            println!("      {} .cursor/", style("└──").dim());
+        }
+    }
+
+    // Codex
+    if scan.codex_dir || !scan.codex_skills.is_empty() {
+        println!("    {} {}", style("●").green(), style("codex").bold());
+        if !scan.codex_skills.is_empty() {
+            let count = scan.codex_skills.len();
+            let names = scan.codex_skills.join(", ");
+            println!(
+                "      {} .codex/skills/ ({count} skill{}: {names})",
+                style("└──").dim(),
+                if count == 1 { "" } else { "s" }
+            );
+        } else {
+            println!("      {} .codex/", style("└──").dim());
+        }
+    }
+
+    // Windsurf
+    if scan.windsurf_dir || !scan.windsurf_rules.is_empty() {
+        println!("    {} {}", style("●").green(), style("windsurf").bold());
+        if !scan.windsurf_rules.is_empty() {
+            let count = scan.windsurf_rules.len();
+            let names = scan.windsurf_rules.join(", ");
+            println!(
+                "      {} .windsurf/rules/ ({count} rule{}: {names})",
+                style("└──").dim(),
+                if count == 1 { "" } else { "s" }
+            );
+        } else {
+            println!("      {} .windsurf/", style("└──").dim());
         }
     }
 
@@ -1886,6 +2139,7 @@ Generic sub content.
             claude_agents: Vec::new(),
             claude_skills: Vec::new(),
             gemini_dir: false,
+            ..Default::default()
         };
         let backends = scan.detected_backends();
         assert!(backends.contains(&"claude-code"));
@@ -1907,6 +2161,7 @@ Generic sub content.
             claude_agents: Vec::new(),
             claude_skills: Vec::new(),
             gemini_dir: false,
+            ..Default::default()
         };
         assert!(scan.has_detections());
     }
@@ -1926,6 +2181,7 @@ Generic sub content.
             claude_agents: Vec::new(),
             claude_skills: Vec::new(),
             gemini_dir: false,
+            ..Default::default()
         };
         assert!(scan.detected_backends().contains(&"claude-code"));
     }
@@ -1945,6 +2201,7 @@ Generic sub content.
             claude_agents: Vec::new(),
             claude_skills: Vec::new(),
             gemini_dir: false,
+            ..Default::default()
         };
         assert!(scan.detected_backends().contains(&"claude-code"));
     }
@@ -1964,6 +2221,7 @@ Generic sub content.
             claude_agents: vec!["my-agent".to_string()],
             claude_skills: Vec::new(),
             gemini_dir: false,
+            ..Default::default()
         };
         assert!(scan.detected_backends().contains(&"claude-code"));
     }
@@ -1983,6 +2241,7 @@ Generic sub content.
             claude_agents: Vec::new(),
             claude_skills: vec!["my-skill".to_string()],
             gemini_dir: false,
+            ..Default::default()
         };
         assert!(scan.detected_backends().contains(&"claude-code"));
     }
@@ -2002,6 +2261,7 @@ Generic sub content.
             claude_agents: Vec::new(),
             claude_skills: Vec::new(),
             gemini_dir: true,
+            ..Default::default()
         };
         assert!(scan.detected_backends().contains(&"gemini-cli"));
     }
@@ -2075,6 +2335,7 @@ Generic sub content.
             claude_agents: Vec::new(),
             claude_skills: Vec::new(),
             gemini_dir: false,
+            ..Default::default()
         };
         // Just exercise the function for coverage.
         print_scan_results(&scan);
@@ -2105,6 +2366,7 @@ Generic sub content.
             claude_agents: vec!["reviewer".to_string()],
             claude_skills: vec!["deploy".to_string()],
             gemini_dir: true,
+            ..Default::default()
         };
         // Exercise the function for coverage.
         print_scan_results(&scan);
@@ -2129,6 +2391,7 @@ Generic sub content.
             claude_agents: Vec::new(),
             claude_skills: Vec::new(),
             gemini_dir: false,
+            ..Default::default()
         };
         // Exercises the claude-code branch without settings/mcp/agents/skills.
         print_scan_results(&scan);
@@ -2150,6 +2413,7 @@ Generic sub content.
             claude_agents: Vec::new(),
             claude_skills: Vec::new(),
             gemini_dir: true,
+            ..Default::default()
         };
         print_scan_results(&scan);
     }
@@ -2188,6 +2452,7 @@ Generic sub content.
             claude_agents: Vec::new(),
             claude_skills: Vec::new(),
             gemini_dir: false,
+            ..Default::default()
         };
         // Exercises the mcp_json branch with count > 1 (plural "servers")
         print_scan_results(&scan);
@@ -2218,6 +2483,7 @@ Generic sub content.
             claude_agents: Vec::new(),
             claude_skills: Vec::new(),
             gemini_dir: false,
+            ..Default::default()
         };
         // Exercises the mcp_json branch with count == 1 (singular "server")
         print_scan_results(&scan);
@@ -2238,6 +2504,7 @@ Generic sub content.
             claude_agents: vec!["solo-agent".to_string()],
             claude_skills: Vec::new(),
             gemini_dir: false,
+            ..Default::default()
         };
         // Exercises the agents branch with count == 1 (singular "agent")
         print_scan_results(&scan);
@@ -2258,6 +2525,7 @@ Generic sub content.
             claude_agents: Vec::new(),
             claude_skills: vec!["solo-skill".to_string()],
             gemini_dir: false,
+            ..Default::default()
         };
         // Exercises the skills branch with count == 1 (singular "skill")
         print_scan_results(&scan);
@@ -2591,6 +2859,7 @@ Deploy via Docker.
             claude_agents: Vec::new(),
             claude_skills: Vec::new(),
             gemini_dir: false,
+            ..Default::default()
         };
         assert!(!scan.has_detections());
         assert!(scan.detected_backends().is_empty());
@@ -2612,6 +2881,7 @@ Deploy via Docker.
             claude_agents: Vec::new(),
             claude_skills: Vec::new(),
             gemini_dir: true,
+            ..Default::default()
         };
         let backends = scan.detected_backends();
         assert_eq!(backends.len(), 2);
@@ -2943,6 +3213,7 @@ Deploy via Docker.
             claude_agents: vec!["agent-a".to_string(), "agent-b".to_string()],
             claude_skills: Vec::new(),
             gemini_dir: false,
+            ..Default::default()
         };
         // Exercises plural "agents" path
         print_scan_results(&scan);
@@ -2963,6 +3234,7 @@ Deploy via Docker.
             claude_agents: Vec::new(),
             claude_skills: vec!["skill-a".to_string(), "skill-b".to_string()],
             gemini_dir: false,
+            ..Default::default()
         };
         // Exercises plural "skills" path
         print_scan_results(&scan);
@@ -2983,6 +3255,7 @@ Deploy via Docker.
             claude_agents: Vec::new(),
             claude_skills: Vec::new(),
             gemini_dir: false,
+            ..Default::default()
         };
         // Exercises gemini_md path without gemini_dir
         print_scan_results(&scan);
@@ -3003,6 +3276,7 @@ Deploy via Docker.
             claude_agents: Vec::new(),
             claude_skills: Vec::new(),
             gemini_dir: false,
+            ..Default::default()
         };
         // Exercises agents_md path
         print_scan_results(&scan);
@@ -3122,6 +3396,7 @@ npm run build
             claude_agents: Vec::new(),
             claude_skills: Vec::new(),
             gemini_dir: true,
+            ..Default::default()
         };
         assert!(scan.has_detections());
     }
@@ -3141,6 +3416,7 @@ npm run build
             claude_agents: Vec::new(),
             claude_skills: Vec::new(),
             gemini_dir: false,
+            ..Default::default()
         };
         assert!(scan.has_detections());
     }
@@ -3160,6 +3436,7 @@ npm run build
             claude_agents: Vec::new(),
             claude_skills: Vec::new(),
             gemini_dir: false,
+            ..Default::default()
         };
         assert!(scan.has_detections());
     }
@@ -3179,6 +3456,7 @@ npm run build
             claude_agents: Vec::new(),
             claude_skills: vec!["s".to_string()],
             gemini_dir: false,
+            ..Default::default()
         };
         assert!(scan.has_detections());
     }

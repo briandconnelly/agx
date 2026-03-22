@@ -10,6 +10,7 @@ pub mod diff;
 pub mod format_helpers;
 pub mod generate;
 pub mod graph;
+pub mod import;
 pub mod info;
 pub mod init;
 pub mod install;
@@ -292,6 +293,9 @@ pub enum Commands {
     /// Initialize a new agx project or import existing configuration
     Init(init::InitArgs),
 
+    /// Import existing agent config files into an agent-environment.yml
+    Import(import::ImportArgs),
+
     /// Resolve, download, and generate backend configurations
     Install(install::InstallArgs),
 
@@ -357,6 +361,7 @@ pub enum Commands {
 pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
         Commands::Init(args) => init::run(args),
+        Commands::Import(args) => import::run(args),
         Commands::Install(args) => install::run(args),
         Commands::Diff(args) => diff::run(args),
         Commands::Generate(args) => generate::run(args),
