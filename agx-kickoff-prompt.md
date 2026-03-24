@@ -2,7 +2,8 @@
 
 ## How to use
 
-Copy the prompt below and paste it into Claude Code from the directory containing `agx-spec.md` and `agx-roadmap.md`. This will execute Phase 0 (project foundation) and set up the scaffolding for Phase 1 parallel agents.
+Copy the prompt below and paste it into Claude Code from the directory containing `agx-spec.md` and `agx-roadmap.md`.
+This will execute Phase 0 (project foundation) and set up the scaffolding for Phase 1 parallel agents.
 
 ---
 
@@ -145,4 +146,5 @@ After this prompt completes, you'll have:
 3. A module structure ready for parallel development
 4. 5 task descriptions you can feed to parallel Claude Code agents
 
-To kick off Phase 1, open 5 Claude Code sessions (or use agent teams/worktrees) and give each one the corresponding task file plus the project's CLAUDE.md. Each agent works on its module independently, then you integrate.
+To kick off Phase 1, open 5 Claude Code sessions (or use agent teams/worktrees) and give each one the corresponding task file plus the project's CLAUDE.md.
+Each agent works on its module independently, then you integrate.

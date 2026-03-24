@@ -44,7 +44,8 @@ pub fn is_stale(lockfile: &Lockfile, manifest: &AgentEnvironment) -> bool;
 
 ## Dependencies on Other Agents
 
-None — this agent works independently. The types in `manifest/types.rs` are already defined and are the shared contract.
+None — this agent works independently.
+The types in `manifest/types.rs` are already defined and are the shared contract.
 
 ## Integration Points
 

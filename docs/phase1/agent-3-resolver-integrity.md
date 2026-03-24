@@ -47,8 +47,10 @@ pub fn verify_dir(path: &Path, expected: &str) -> Result<bool>;
 
 - **Semver:** Test all constraint syntaxes: `"1.2.0"`, `">=1.0.0, <2.0.0"`, `"~1.3.0"`, `"^1.3.0"`
 - **Resolution:** Create mock registry indexes, resolve a manifest with multiple plugins, verify correct versions selected
-- **Conflicts:** Two plugins providing same-named agent → error. Same scenario with include/exclude → success.
-- **Integrity:** Hash a temp file, verify it matches. Corrupt the file, verify it fails.
+- **Conflicts:** Two plugins providing same-named agent → error.
+Same scenario with include/exclude → success.
+- **Integrity:** Hash a temp file, verify it matches.
+Corrupt the file, verify it fails.
 - **Local assets:** Verify local paths are passed through without version resolution
 
 ## Dependencies on Other Agents

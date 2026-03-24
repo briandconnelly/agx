@@ -28,10 +28,12 @@ In `src/cache/mod.rs`:
 - `get_plugin()`, `get_skill()`, `get_agent()`: if the cached directory exists but is empty, treat it as missing (return None) instead of returning a path to an empty dir.
 
 ### 3. Manifest file encoding
-In `src/manifest/mod.rs` (the `load()` function): add a check that the file is valid UTF-8 before parsing. If not, return a clear error: "manifest file is not valid UTF-8".
+In `src/manifest/mod.rs` (the `load()` function): add a check that the file is valid UTF-8 before parsing.
+If not, return a clear error: "manifest file is not valid UTF-8".
 
 ### 4. Lockfile version check
-In `src/lockfile/mod.rs` (the `load()` function): after deserializing, check `lockfile_version`. If it's higher than the supported version (1), return an error: "lockfile was created by a newer version of agx; please upgrade".
+In `src/lockfile/mod.rs` (the `load()` function): after deserializing, check `lockfile_version`.
+If it's higher than the supported version (1), return an error: "lockfile was created by a newer version of agx; please upgrade".
 
 ### 5. Empty manifest name
 In `src/manifest/validate.rs`: add a validation that `name` is not empty and contains only valid characters (alphanumeric, hyphens, underscores).

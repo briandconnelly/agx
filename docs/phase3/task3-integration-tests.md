@@ -2,7 +2,8 @@
 
 ## Integration Tests
 
-Create end-to-end integration tests in `tests/` that test real workflows using the library API (not shelling out to the binary). These tests should NOT require network access.
+Create end-to-end integration tests in `tests/` that test real workflows using the library API (not shelling out to the binary).
+These tests should NOT require network access.
 
 ### tests/integration_test.rs
 

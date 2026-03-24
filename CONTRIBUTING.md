@@ -12,7 +12,8 @@ cargo fmt            # format code
 
 ## Project Structure
 
-See the **Module Map** in [CLAUDE.md](CLAUDE.md) for a complete overview of the codebase layout. The key idea: one file per CLI command in `src/cli/`, typed errors via `thiserror` in library code, and `anyhow::Result` in CLI handlers.
+See the **Module Map** in [CLAUDE.md](CLAUDE.md) for a complete overview of the codebase layout.
+The key idea: one file per CLI command in `src/cli/`, typed errors via `thiserror` in library code, and `anyhow::Result` in CLI handlers.
 
 ## Adding a New Backend
 

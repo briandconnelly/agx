@@ -34,7 +34,8 @@ Follow the exact pattern of `cursor.rs`:
 
 ### 3. Update backends_cmd.rs
 
-Add "windsurf" to `BUILTIN_BACKENDS` with description "Windsurf (Codeium)". Update the test assertion for the backend count.
+Add "windsurf" to `BUILTIN_BACKENDS` with description "Windsurf (Codeium)".
+Update the test assertion for the backend count.
 
 ### 4. Update init.rs
 

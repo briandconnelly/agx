@@ -46,7 +46,8 @@ pub struct PluginVersion {
 
 ## Dependencies on Other Agents
 
-None — this agent works independently. Uses `cache::cache_dir()` which is already implemented.
+None — this agent works independently.
+Uses `cache::cache_dir()` which is already implemented.
 
 ## Integration Points
 
@@ -57,7 +58,8 @@ After this agent completes:
 ## Notes
 
 - Shell out to `git` binary, don't use git2 crate
-- The marketplace.json format needs to be defined. For now, assume a simple structure:
+- The marketplace.json format needs to be defined.
+For now, assume a simple structure:
   ```json
   {
     "plugins": {

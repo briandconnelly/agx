@@ -12,7 +12,7 @@ Everything that needs to exist for agx to be a real, shippable product.
 
 | Artifact | Purpose | When |
 |---|---|---|
-| `agx-spec.md` | Design specification (✅ done) | Phase 0 |
+| `agx-spec.md` | Design specification (done) | Phase 0 |
 | `agent-environment.schema.json` | JSON Schema for manifest validation + editor autocomplete | Phase 1 |
 | `agent-environment.lock.schema.json` | JSON Schema for lockfile format | Phase 1 |
 | `README.md` | Project overview, install instructions, quickstart | Phase 1 |
@@ -72,7 +72,7 @@ Everything that needs to exist for agx to be a real, shippable product.
 | Artifact | Description | Phase |
 |---|---|---|
 | Unit test suite | Parser, resolver, cache manager, generator, context merger | Phase 1+ |
-| Integration test suite | End-to-end `init → install → generate → run` workflows | Phase 2 |
+| Integration test suite | End-to-end `init -> install -> generate -> run` workflows | Phase 2 |
 | Example project: `agx-example-claude` | Minimal Claude Code project managed by agx | Phase 1 |
 | Example project: `agx-example-multi` | Multi-backend project (Claude + Gemini) | Phase 2 |
 | Example project: `agx-example-monorepo` | Monorepo with child context files | Phase 3 |
@@ -83,7 +83,7 @@ Everything that needs to exist for agx to be a real, shippable product.
 | Artifact | Description | Phase |
 |---|---|---|
 | Pre-built binaries | Linux (x86_64, aarch64), macOS (Intel, Apple Silicon), Windows | Phase 1 |
-| Install script | `curl -sSf https://agx.dev/install.sh \| sh` (à la Rust/uv) | Phase 2 |
+| Install script | `curl -sSf https://agx.dev/install.sh \| sh` (a la Rust/uv) | Phase 2 |
 | Homebrew formula | `brew install agx` | Phase 2 |
 | npm wrapper | `npx agx` (downloads binary, like `@anthropic-ai/claude-code`) | Phase 3 |
 | Cargo install | `cargo install agx` (if built in Rust) | Phase 1 (free) |
@@ -92,9 +92,11 @@ Everything that needs to exist for agx to be a real, shippable product.
 
 ## Implementation Roadmap
 
-**Capacity model:** With Claude Code agent swarms, you can run 4–8 agents in parallel on independent components. The phases below are compressed accordingly, with parallelization maps showing which tasks can run simultaneously. Total estimated timeline: **4–5 weeks to v0.1.0 stable** (vs. 12 weeks for a solo human developer).
+**Capacity model:** With Claude Code agent swarms, you can run 4-8 agents in parallel on independent components.
+The phases below are compressed accordingly, with parallelization maps showing which tasks can run simultaneously.
+Total estimated timeline: **4-5 weeks to v0.1.0 stable** (vs. 12 weeks for a solo human developer).
 
-### Phase 0: Foundation (Day 1–2)
+### Phase 0: Foundation (Day 1-2)
 **Goal: Project skeleton, build system, CI.**
 
 - [ ] Choose language: **Rust recommended** (fast, single binary, Cargo ecosystem is a natural fit; alternatives: Go, TypeScript)
@@ -109,10 +111,11 @@ Everything that needs to exist for agx to be a real, shippable product.
 
 ---
 
-### Phase 1: MVP — Claude Code Backend (Days 3–10)
-**Goal: A working `agx init → install → generate` pipeline for Claude Code projects.**
+### Phase 1: MVP — Claude Code Backend (Days 3-10)
+**Goal: A working `agx init -> install -> generate` pipeline for Claude Code projects.**
 
-This is the critical path. Everything else builds on this.
+This is the critical path.
+Everything else builds on this.
 
 **Parallelization map — spin up 5 agents simultaneously:**
 
@@ -158,13 +161,14 @@ Agent 5: Claude Code backend generator
 - [ ] Wire up `agx init` — basic new-project scaffolder
 - [ ] Wire up `agx add` / `agx remove` — manifest editing
 
-**Deliverable:** A user can `agx init`, add plugins/skills/agents/MCP servers, run `agx install`, and get a working `.claude/` + `.mcp.json`. Teammates can clone + `agx install` to reproduce.
+**Deliverable:** A user can `agx init`, add plugins/skills/agents/MCP servers, run `agx install`, and get a working `.claude/` + `.mcp.json`.
+Teammates can clone + `agx install` to reproduce.
 
 **Milestone: v0.1.0-alpha release.**
 
 ---
 
-### Phase 2: Full Feature Set (Days 11–18)
+### Phase 2: Full Feature Set (Days 11-18)
 **Goal: Multi-backend, `agx run`, existing project import, context files.**
 
 **Parallelization map — spin up 5 agents simultaneously:**
@@ -212,7 +216,7 @@ Agent 5: Inspection + registry commands
 
 ---
 
-### Phase 3: Polish + Ecosystem (Days 19–25)
+### Phase 3: Polish + Ecosystem (Days 19-25)
 **Goal: Production-ready release, documentation, distribution.**
 
 **Parallelization map — spin up 4 agents simultaneously:**
@@ -270,7 +274,7 @@ Items from the spec's "Future Considerations" section, prioritized by user deman
 
 | Consideration | Rust | Go | TypeScript/Node |
 |---|---|---|---|
-| Single binary, no runtime | ✅ | ✅ | ❌ (needs Node) |
+| Single binary, no runtime | Yes | Yes | No (needs Node) |
 | Startup speed | ~1ms | ~5ms | ~100ms+ |
 | Ecosystem precedent | Cargo, uv, ripgrep | Docker, Terraform | npm, Bun |
 | YAML/TOML parsing | `serde` (excellent) | Adequate | Adequate |
@@ -279,7 +283,9 @@ Items from the spec's "Future Considerations" section, prioritized by user deman
 | Cross-compilation | Good (cross-rs) | Excellent | N/A |
 | Learning curve | Steep | Moderate | Low |
 
-Rust is the strongest choice if you're comfortable with it. It produces the kind of fast, single-binary CLI that users expect from modern dev tools (this is what uv, Cargo, and ripgrep all use). If Rust is too steep, Go is a solid second choice.
+Rust is the strongest choice if you're comfortable with it.
+It produces the kind of fast, single-binary CLI that users expect from modern dev tools (this is what uv, Cargo, and ripgrep all use).
+If Rust is too steep, Go is a solid second choice.
 
 ### Key Crates (Rust)
 
@@ -314,4 +320,7 @@ If you have limited time and want the fastest path to something usable:
 5. agx init (new project only)              (onboarding)
 ```
 
-That's your v0.0.1. Everything else layers on top. The core insight is that `agx` is fundamentally just three operations: **resolve** (figure out what versions to use), **fetch** (download them to cache), and **generate** (place them where the backend expects). Get those three right and the rest is UX.
+That's your v0.0.1.
+Everything else layers on top.
+The core insight is that `agx` is fundamentally just three operations: **resolve** (figure out what versions to use), **fetch** (download them to cache), and **generate** (place them where the backend expects).
+Get those three right and the rest is UX.

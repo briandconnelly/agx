@@ -6,7 +6,8 @@ Add `agx publish` command that packages and publishes a skill, agent, or plugin 
 
 ## How Publishing Works
 
-A registry is a git repo with a `marketplace.json` index. Publishing means:
+A registry is a git repo with a `marketplace.json` index.
+Publishing means:
 1. Validate the asset to publish (must have required metadata)
 2. Create a git commit in the registry repo adding/updating the entry in `marketplace.json`
 3. Push the change to the registry remote

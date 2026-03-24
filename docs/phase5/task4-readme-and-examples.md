@@ -6,7 +6,8 @@ Create a polished README.md and example project directories that demonstrate rea
 
 ## 1. README.md
 
-Create a comprehensive README.md at the project root. Content:
+Create a comprehensive README.md at the project root.
+Content:
 
 ### Structure
 

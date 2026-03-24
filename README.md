@@ -1,31 +1,43 @@
 # agx -- Agent Environment Manager
 
-A package manager for AI agent environments. Think Cargo or uv, but for managing plugins, skills, subagents, and MCP servers across agent frameworks.
+A package manager for AI agent environments.
+Think Cargo or uv, but for managing plugins, skills, subagents, and MCP servers across agent frameworks.
 
 ## Why agx?
 
-AI coding agents are becoming core infrastructure for development teams. But managing their environments -- plugins, skills, MCP servers, context files, model settings -- is a mess:
+AI coding agents are becoming core infrastructure for development teams.
+But managing their environments -- plugins, skills, MCP servers, context files, model settings -- is a mess:
 
-- **Environment drift.** One developer has a working MCP server config; another has a stale one. Skills get added on one machine and forgotten on another. There is no lockfile, no pinning, no reproducibility.
-- **Multi-framework duplication.** A project using Claude Code and Gemini CLI maintains two parallel sets of config files that are 80% identical. Changes to shared instructions require editing multiple files.
-- **No sharing mechanism.** Useful agent skills and plugins are copy-pasted between projects. There is no registry, no versioning, no way to discover what others have built.
-- **Manual plumbing.** Each framework has its own directory layout, settings format, and conventions. Setting up a new developer means a wiki page and 20 minutes of hand-editing JSON.
+- **Environment drift.** One developer has a working MCP server config; another has a stale one.
+Skills get added on one machine and forgotten on another.
+There is no lockfile, no pinning, no reproducibility.
+- **Multi-framework duplication.** A project using Claude Code and Gemini CLI maintains two parallel sets of config files that are 80% identical.
+Changes to shared instructions require editing multiple files.
+- **No sharing mechanism.** Useful agent skills and plugins are copy-pasted between projects.
+There is no registry, no versioning, no way to discover what others have built.
+- **Manual plumbing.** Each framework has its own directory layout, settings format, and conventions.
+Setting up a new developer means a wiki page and 20 minutes of hand-editing JSON.
 
-agx eliminates all of this. One manifest, one lockfile, one command.
+agx eliminates all of this.
+One manifest, one lockfile, one command.
 
 ## Key Features
 
 ### One manifest, many backends
 
-Write `agent-environment.yml` once. agx generates the correct config files for Claude Code, Gemini CLI, Codex, Cursor, and Windsurf -- simultaneously, from one source of truth.
+Write `agent-environment.yml` once.
+agx generates the correct config files for Claude Code, Gemini CLI, Codex, Cursor, and Windsurf -- simultaneously, from one source of truth.
 
 ### Reproducible environments
 
-A lockfile (`agent-environment.lock`) pins exact versions, commit SHAs, and content hashes. Every developer on the team gets an identical agent environment. No more "works on my machine" for AI tooling.
+A lockfile (`agent-environment.lock`) pins exact versions, commit SHAs, and content hashes.
+Every developer on the team gets an identical agent environment.
+No more "works on my machine" for AI tooling.
 
 ### Import existing projects
 
-Already have a `.claude/` directory, `.mcp.json`, agents, and skills? Run `agx import` to reverse-engineer a manifest from your existing config -- instant value, no manual YAML writing.
+Already have a `.claude/` directory, `.mcp.json`, agents, and skills?
+Run `agx import` to reverse-engineer a manifest from your existing config -- instant value, no manual YAML writing.
 
 ```bash
 agx import              # scan and create manifest from existing files
@@ -35,11 +47,14 @@ agx import --backend claude-code,gemini-cli  # import specific backends only
 
 ### Federated plugin registries
 
-Share skills and agents through GitHub-hosted marketplace registries. Use the official registry, community marketplaces, or host private registries for your organization -- no infrastructure required.
+Share skills and agents through GitHub-hosted marketplace registries.
+Use the official registry, community marketplaces, or host private registries for your organization -- no infrastructure required.
 
 ### Context file management
 
-Shared project instructions go in `CONTEXT.md`. Backend-specific additions go in overlays (`CONTEXT.claude-code.md`, `CONTEXT.gemini-cli.md`). agx merges them during generation, eliminating the duplication that plagues multi-framework projects.
+Shared project instructions go in `CONTEXT.md`.
+Backend-specific additions go in overlays (`CONTEXT.claude-code.md`, `CONTEXT.gemini-cli.md`).
+agx merges them during generation, eliminating the duplication that plagues multi-framework projects.
 
 ### Isolation modes
 
@@ -74,27 +89,39 @@ agx run
 
 ### Teams standardizing on agent tooling
 
-Your team uses Claude Code. Everyone has slightly different settings, skills, and MCP servers. Some developers have plugins others don't. When someone joins, they spend an hour copying config files.
+Your team uses Claude Code.
+Everyone has slightly different settings, skills, and MCP servers.
+Some developers have plugins others don't.
+When someone joins, they spend an hour copying config files.
 
-With agx: check in `agent-environment.yml` and `agent-environment.lock`. New developers run `agx install` and get an identical environment in seconds.
+With agx: check in `agent-environment.yml` and `agent-environment.lock`.
+New developers run `agx install` and get an identical environment in seconds.
 
 ### Multi-framework projects
 
-Your project supports both Claude Code and Gemini CLI. You maintain parallel config directories, duplicating shared instructions and skills across frameworks. Every change requires editing two (or more) sets of files.
+Your project supports both Claude Code and Gemini CLI.
+You maintain parallel config directories, duplicating shared instructions and skills across frameworks.
+Every change requires editing two (or more) sets of files.
 
-With agx: write shared context once in `CONTEXT.md`, add backend-specific overlays where needed. Skills and agents are declared once in the manifest and generated for all active backends.
+With agx: write shared context once in `CONTEXT.md`, add backend-specific overlays where needed.
+Skills and agents are declared once in the manifest and generated for all active backends.
 
 ### Organizations sharing internal tools
 
-Your company has built custom agent skills for code review, deployment, and compliance checks. Today these are copy-pasted between repositories, with no versioning or update mechanism.
+Your company has built custom agent skills for code review, deployment, and compliance checks.
+Today these are copy-pasted between repositories, with no versioning or update mechanism.
 
-With agx: publish skills to a private GitHub-hosted registry. Projects declare dependencies with semver constraints. Updates propagate through `agx update`.
+With agx: publish skills to a private GitHub-hosted registry.
+Projects declare dependencies with semver constraints.
+Updates propagate through `agx update`.
 
 ### CI/CD pipelines
 
 Your CI needs to run agents in a clean, reproducible environment without developer-specific config leaking in.
 
-With agx: use `bare` isolation mode. The lockfile guarantees the exact same agent environment in CI as in development. No manual setup, no environment-specific scripts.
+With agx: use `bare` isolation mode.
+The lockfile guarantees the exact same agent environment in CI as in development.
+No manual setup, no environment-specific scripts.
 
 ## Manifest Example
 
@@ -190,7 +217,8 @@ hooks:
 
 ## Backends
 
-agx supports multiple agent frameworks through a pluggable backend system. Each backend generates the correct directory layout and config files for its framework.
+agx supports multiple agent frameworks through a pluggable backend system.
+Each backend generates the correct directory layout and config files for its framework.
 
 | Backend | Context File | Generated Output |
 |---|---|---|
@@ -201,19 +229,27 @@ agx supports multiple agent frameworks through a pluggable backend system. Each 
 | `windsurf` | `AGENTS.md` | `.agx/agents/`, `.agx/skills/` |
 | `generic` | `AGENTS.md` | `.agx/agents/`, `.agx/skills/` |
 
-A single manifest can target multiple backends simultaneously. Run `agx backends` to list all available backends.
+A single manifest can target multiple backends simultaneously.
+Run `agx backends` to list all available backends.
 
 ## How It Works
 
 agx uses a three-phase pipeline, similar to how Cargo or uv operate:
 
-1. **Resolve** -- The manifest (`agent-environment.yml`) is parsed and dependency versions are solved. Git refs are resolved to pinned commit SHAs. The result is written to `agent-environment.lock`, which should be committed to version control for reproducibility.
+1. **Resolve** -- The manifest (`agent-environment.yml`) is parsed and dependency versions are solved.
+Git refs are resolved to pinned commit SHAs.
+The result is written to `agent-environment.lock`, which should be committed to version control for reproducibility.
 
-2. **Fetch** -- Resolved assets are downloaded to a global cache (`$XDG_CACHE_HOME/agx`). The cache is content-addressed and shared across all projects, so identical dependencies are only downloaded once.
+2. **Fetch** -- Resolved assets are downloaded to a global cache (`$XDG_CACHE_HOME/agx`).
+The cache is content-addressed and shared across all projects, so identical dependencies are only downloaded once.
 
-3. **Generate** -- Cached assets are rendered into backend-specific directories. Context files are assembled by merging the base `CONTEXT.md` with backend-specific overlays. Agent frontmatter is injected with model overrides. MCP server configs are written in the backend's expected format.
+3. **Generate** -- Cached assets are rendered into backend-specific directories.
+Context files are assembled by merging the base `CONTEXT.md` with backend-specific overlays.
+Agent frontmatter is injected with model overrides.
+MCP server configs are written in the backend's expected format.
 
-Running `agx install` performs all three phases. You can also run them individually with `agx lock`, `agx cache`, and `agx generate`.
+Running `agx install` performs all three phases.
+You can also run them individually with `agx lock`, `agx cache`, and `agx generate`.
 
 ## Configuration
 
@@ -242,7 +278,8 @@ my-project/
   .mcp.json                   # Generated MCP config (gitignored)
 ```
 
-Only the manifest, lockfile, context source files, and local assets are committed to version control. Everything in `.agx/` and all generated backend files are reproducible from these inputs.
+Only the manifest, lockfile, context source files, and local assets are committed to version control.
+Everything in `.agx/` and all generated backend files are reproducible from these inputs.
 
 ## License
 

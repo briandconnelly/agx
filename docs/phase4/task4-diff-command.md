@@ -2,7 +2,8 @@
 
 ## Overview
 
-Add `agx diff` command that shows what would change if `agx generate` were run now. This is a dry-run that compares the current generated files against what would be produced from the current lockfile, without actually writing anything.
+Add `agx diff` command that shows what would change if `agx generate` were run now.
+This is a dry-run that compares the current generated files against what would be produced from the current lockfile, without actually writing anything.
 
 ## Implementation
 
@@ -33,7 +34,8 @@ For each generated file, compare against the existing file in the project:
 - **Unchanged file**: same content → skip (or print in dim if `--verbose`)
 - **Deleted file**: file exists in project with agx marker but not in tempdir → print in red: `- <path>`
 
-For modified files, optionally show a unified diff (line-by-line comparison). Implement a simple diff:
+For modified files, optionally show a unified diff (line-by-line comparison).
+Implement a simple diff:
 - Show lines prefixed with `-` (removed) and `+` (added)
 - Use `console::style` for red/green coloring
 - Limit diff output to first 20 lines per file with a "... and N more lines" trailer

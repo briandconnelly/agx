@@ -38,7 +38,8 @@ codex --skills-dir .codex/skills/ --model <model>
 - `AGENTS.md` — from base context
 
 ### `run_command`
-Cursor is an IDE, not a CLI. `run_command` should bail with a helpful message: "cursor backend is an IDE — open the project directory in Cursor instead".
+Cursor is an IDE, not a CLI.
+`run_command` should bail with a helpful message: "cursor backend is an IDE — open the project directory in Cursor instead".
 
 ### Implementation
 - Create `src/backends/cursor.rs` implementing `Backend` trait

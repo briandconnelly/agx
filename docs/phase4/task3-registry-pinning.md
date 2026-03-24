@@ -2,7 +2,8 @@
 
 ## Overview
 
-Allow pinning a registry index to a specific git commit SHA, so even the catalog of available packages is reproducible. This prevents a compromised or modified registry from silently changing what versions are available.
+Allow pinning a registry index to a specific git commit SHA, so even the catalog of available packages is reproducible.
+This prevents a compromised or modified registry from silently changing what versions are available.
 
 ## Manifest Schema
 

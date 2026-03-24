@@ -92,7 +92,9 @@ Everything that needs to exist for agx to be a real, shippable product.
 
 ## Implementation Roadmap
 
-**Capacity model:** With Claude Code agent swarms, you can run 4–8 agents in parallel on independent components. The phases below are compressed accordingly, with parallelization maps showing which tasks can run simultaneously. Total estimated timeline: **4–5 weeks to v0.1.0 stable** (vs. 12 weeks for a solo human developer).
+**Capacity model:** With Claude Code agent swarms, you can run 4–8 agents in parallel on independent components.
+The phases below are compressed accordingly, with parallelization maps showing which tasks can run simultaneously.
+Total estimated timeline: **4–5 weeks to v0.1.0 stable** (vs. 12 weeks for a solo human developer).
 
 ### Phase 0: Foundation (Day 1–2)
 **Goal: Project skeleton, build system, CI.**
@@ -112,7 +114,8 @@ Everything that needs to exist for agx to be a real, shippable product.
 ### Phase 1: MVP — Claude Code Backend (Days 3–10)
 **Goal: A working `agx init → install → generate` pipeline for Claude Code projects.**
 
-This is the critical path. Everything else builds on this.
+This is the critical path.
+Everything else builds on this.
 
 **Parallelization map — spin up 5 agents simultaneously:**
 
@@ -158,7 +161,8 @@ Agent 5: Claude Code backend generator
 - [ ] Wire up `agx init` — basic new-project scaffolder
 - [ ] Wire up `agx add` / `agx remove` — manifest editing
 
-**Deliverable:** A user can `agx init`, add plugins/skills/agents/MCP servers, run `agx install`, and get a working `.claude/` + `.mcp.json`. Teammates can clone + `agx install` to reproduce.
+**Deliverable:** A user can `agx init`, add plugins/skills/agents/MCP servers, run `agx install`, and get a working `.claude/` + `.mcp.json`.
+Teammates can clone + `agx install` to reproduce.
 
 **Milestone: v0.1.0-alpha release.**
 
@@ -279,7 +283,9 @@ Items from the spec's "Future Considerations" section, prioritized by user deman
 | Cross-compilation | Good (cross-rs) | Excellent | N/A |
 | Learning curve | Steep | Moderate | Low |
 
-Rust is the strongest choice if you're comfortable with it. It produces the kind of fast, single-binary CLI that users expect from modern dev tools (this is what uv, Cargo, and ripgrep all use). If Rust is too steep, Go is a solid second choice.
+Rust is the strongest choice if you're comfortable with it.
+It produces the kind of fast, single-binary CLI that users expect from modern dev tools (this is what uv, Cargo, and ripgrep all use).
+If Rust is too steep, Go is a solid second choice.
 
 ### Key Crates (Rust)
 
@@ -314,4 +320,7 @@ If you have limited time and want the fastest path to something usable:
 5. agx init (new project only)              (onboarding)
 ```
 
-That's your v0.0.1. Everything else layers on top. The core insight is that `agx` is fundamentally just three operations: **resolve** (figure out what versions to use), **fetch** (download them to cache), and **generate** (place them where the backend expects). Get those three right and the rest is UX.
+That's your v0.0.1.
+Everything else layers on top.
+The core insight is that `agx` is fundamentally just three operations: **resolve** (figure out what versions to use), **fetch** (download them to cache), and **generate** (place them where the backend expects).
+Get those three right and the rest is UX.
