@@ -7,6 +7,7 @@ pub mod check;
 pub mod clean;
 pub mod completions;
 pub mod diff;
+pub mod doctor;
 pub mod format_helpers;
 pub mod generate;
 pub mod graph;
@@ -302,6 +303,9 @@ pub enum Commands {
     /// Show what would change if `agx generate` were run now
     Diff(diff::DiffArgs),
 
+    /// Diagnose system, user, and project configuration
+    Doctor(doctor::DoctorArgs),
+
     /// Regenerate backend configs from existing lockfile and cache
     Generate(generate::GenerateArgs),
 
@@ -364,6 +368,7 @@ pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
         Commands::Import(args) => import::run(args),
         Commands::Install(args) => install::run(args),
         Commands::Diff(args) => diff::run(args),
+        Commands::Doctor(args) => doctor::run(args),
         Commands::Generate(args) => generate::run(args),
         Commands::Lock(args) => lock::run(args),
         Commands::Add(args) => add::run(args),
